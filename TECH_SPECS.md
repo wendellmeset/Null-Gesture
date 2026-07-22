@@ -1,3 +1,4 @@
+# Technical Specifications
 ## Components
 
 ### IMU
@@ -7,3 +8,23 @@
 ### RFID
 - Placed on thumb
 - Checks for contact
+
+### Ultra-Wide-Band
+- Used to measure distance between hands
+
+## Motions
+- Pull
+- Push
+- Clockwise
+- Anti-Clockwise
+- Left
+- Right
+- Bye-Bye
+- One Arm Boxing
+- Clapping
+- Two-Arm Boxing
+- T-Arms
+- Raise Arms
+- Soli
+- Opening and Closing Fist
+- Palm Up and Down
