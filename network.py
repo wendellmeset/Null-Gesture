@@ -3,7 +3,9 @@ import tensorflow.keras as keras
 from keras import layers
 from keras import metrics as keras_metrics
 
-TIMESTAMPS = 120 # 2 seconds * 60 Hz
+SECONDS = 5 # Length of each sample collected.
+HERTZ = 50 # Likeliest Hertz value
+TIMESTAMPS = SECONDS * HERTZ
 
 model = keras.Sequential([
     layers.Input(shape=(TIMESTAMPS, 6)), # shape (timestamps, # of IMU features (accel x, y, z; gyro x, y, z))
