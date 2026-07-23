@@ -4,7 +4,7 @@ from keras import layers
 from keras import metrics as keras_metrics
 
 SECONDS = 5 # Length of each sample collected.
-HERTZ = 0.24 # 240 MHz
+HERTZ = 50 # 50hz output rate
 TIMESTAMPS = SECONDS * HERTZ
 
 model = keras.Sequential([

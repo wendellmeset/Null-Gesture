@@ -4,11 +4,11 @@ from keras import layers
 from keras import metrics as keras_metrics
 
 SECONDS = 3 # Length of each sample collected.
-HERTZ = 0.96 # 960mhz
+HERTZ = 30 # 30Hz packet rate
 TIMESTAMPS = SECONDS * HERTZ
 
 model = keras.Sequential([
-    layers.Input(shape=(TIMESTAMPS, 2)), #2 features for RSSI and Read Count
+    layers.Input(shape=(TIMESTAMPS, 2)), #2 features for RSSI and Tag Phase
 
     layers.Conv1D(16, 3, padding='same'),
     layers.BatchNormalization(),      # ← normalize before activation
@@ -21,13 +21,13 @@ model = keras.Sequential([
     layers.MaxPooling1D(pool_size=2),
 
     layers.GlobalAveragePooling1D(),
-    layers.Dense(2, activation='sigmoid')
+    layers.Dense(1, activation='sigmoid')
 ])
 model.compile(
     optimizer=keras.optimizers.Adam(learning_rate=1e-3),
-    loss='sparse_categorical_crossentropy',
+    loss='binary_crossentropy',
     metrics=[
-        keras_metrics.F1Score(average='weighted', name='f1_score')
+        keras_metrics.F1Score(average='binary', name='f1_score')
     ]
 )
 
