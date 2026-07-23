@@ -2,14 +2,16 @@ import re
 import serial
 import time
 import json
-import socket
+from typing import Pattern
 import threading
 import queue
+from typing import cast
 from socketserver import ThreadingTCPServer, StreamRequestHandler
 
 # ---------- Original parsing code ----------
-FLOAT_RE = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
-SAMPLE_RE = re.compile(
+FLOAT_RE: str = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+
+SAMPLE_RE: Pattern[str] = re.compile(
     rf"accel\[g\]\s+x=\s*({FLOAT_RE})\s+y=\s*({FLOAT_RE})\s+z=\s*({FLOAT_RE})"
     rf"\s+\|\s+gyro\[dps\]\s+x=\s*({FLOAT_RE})\s+y=\s*({FLOAT_RE})\s+z=\s*({FLOAT_RE})"
 )
@@ -65,7 +67,7 @@ class DataBroadcaster:
                 self.clients.remove(conn)
         try:
             conn.close()
-        except:
+        except OSError:
             pass
 
     def broadcast(self, data):
@@ -121,7 +123,8 @@ class ClientHandler(StreamRequestHandler):
         # We simply add the client to the broadcaster and wait for data
         # (not used for receiving, only for sending).
         # The connection is kept open as long as the client stays connected.
-        broadcaster = self.server.broadcaster
+        server = cast(BroadcastingTCPServer, self.server)
+        broadcaster = server.broadcaster
         broadcaster.add_client(self.request, self.client_address)
         try:
             # Wait until the client closes the connection
@@ -135,9 +138,16 @@ class ClientHandler(StreamRequestHandler):
         finally:
             broadcaster.remove_client(self.request)
 
+class BroadcastingTCPServer(ThreadingTCPServer):
+    broadcaster: DataBroadcaster
+
+    def __init__(self, server_address, RequestHandlerClass, broadcaster):
+        self.broadcaster = broadcaster
+        super().__init__(server_address, RequestHandlerClass)
+
+
 def run_tcp_server(host, port, broadcaster):
-    server = ThreadingTCPServer((host, port), ClientHandler)
-    server.broadcaster = broadcaster
+    server = BroadcastingTCPServer((host, port), ClientHandler, broadcaster)
     print(f"Data streaming server listening on {host}:{port}")
     try:
         server.serve_forever()
