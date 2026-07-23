@@ -36,7 +36,7 @@ except ImportError:
 _MercuryReader = cast(Any, mercury).Reader
 
 try:
-    from keras import layers, models, utils
+    from keras import layers, models
 except ImportError:
     print("TensorFlow/Keras not installed. Run: pip install tensorflow")
     sys.exit(1)
@@ -187,7 +187,7 @@ def collect_data(port: str | None, output_path: str) -> None:
                 desc = "Make a fist — thumb touching fingers"
             print(f"  NEXT: {label_name} — {desc}")
             print(f"  Hold this position for {SECONDS_PER_CLASS} seconds.")
-            print(f"  Starting in...")
+            print("  Starting in...")
 
             for i in range(3, 0, -1):
                 sys.stdout.write(f"\r  {i}... ")
@@ -305,7 +305,7 @@ def train_model(data_path: str, model_path: str) -> None:
         validation_data=(X_val, y_val),
         epochs=EPOCHS,
         batch_size=BATCH_SIZE,
-        verbose=1,
+        verbose=1,  # pyright: ignore[reportArgumentType]
     )
 
     val_acc = max(history.history['val_accuracy'])
