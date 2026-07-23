@@ -12,6 +12,7 @@
 - Checks for contact
 
 ### Ultra-Wide-Band
+- Qorvo DWM3001CDK boards
 - Used to measure distance between hands
 
 ## Motions
