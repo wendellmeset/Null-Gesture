@@ -64,8 +64,9 @@ def _stop_streaming_via_serial(port: str) -> bool:
     MULTI_PROTOCOL_TAG_OP stop command over serial.
     """
     try:
-        import serial as _serial
         import time as _time
+
+        import serial as _serial
         _ser = _serial.Serial(port, 115200, timeout=1)
         _ser.dtr = False
         _ser.rts = False
