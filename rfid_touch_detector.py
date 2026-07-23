@@ -21,6 +21,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
+
 try:
     import mercury
 except ImportError:
@@ -48,7 +50,6 @@ FEATURE_COUNT = 9
 
 def extract_features(rssi_history: deque, rate: float) -> np.ndarray:
     """Extract feature vector from a window of RSSI readings."""
-    import numpy as np
     if len(rssi_history) < 2:
         return np.zeros(FEATURE_COUNT, dtype=np.float32)
     times = np.array([t for t, _ in rssi_history])
@@ -200,28 +201,32 @@ class LiveTagMetrics:
         if not self.touch_state[epc]:
             triggered = no_read or (rssi_drop is not None and rssi_drop >= RSSI_DROP_TOUCH_DB) or (rate_drop is not None and rate_drop >= RATE_DROP_TOUCH_FRACTION)
             if triggered:
-                if self.touch_start_time[epc] is None:
+                tst = self.touch_start_time[epc]
+                if tst is None:
                     self.touch_start_time[epc] = now
-                if now - self.touch_start_time[epc] >= MIN_TOUCH_DURATION:
+                    tst = now
+                if now - tst >= MIN_TOUCH_DURATION:
                     self.touch_state[epc] = True
                     self.release_start_time[epc] = None
                     if no_read: return "TOUCHED", "tag not read"
                     if rssi_drop is not None and rssi_drop >= RSSI_DROP_TOUCH_DB: return "TOUCHED", f"RSSI drop {rssi_drop:.1f} dB"
                     return "TOUCHED", f"rate drop {rate_drop:.0%}"
-                return "CLEAR", f"pending ({now - self.touch_start_time[epc]:.1f}/{MIN_TOUCH_DURATION:.1f}s)"
+                return "CLEAR", f"pending ({now - tst:.1f}/{MIN_TOUCH_DURATION:.1f}s)"
             self.touch_start_time[epc] = None
             return "CLEAR", "normal"
 
         recovered = not no_read and rssi_drop is not None and rssi_drop <= RSSI_DROP_RELEASE_DB and rate_drop is not None and rate_drop <= RATE_DROP_RELEASE_FRACTION
         if recovered:
-            if self.release_start_time[epc] is None:
+            rst = self.release_start_time[epc]
+            if rst is None:
                 self.release_start_time[epc] = now
-            if now - self.release_start_time[epc] >= MIN_RELEASE_DURATION:
+                rst = now
+            if now - rst >= MIN_RELEASE_DURATION:
                 self.touch_state[epc] = False
                 self.touch_start_time[epc] = None
                 self.release_start_time[epc] = None
                 return "CLEAR", "normal"
-            return "TOUCHED", f"releasing ({now - self.release_start_time[epc]:.1f}/{MIN_RELEASE_DURATION:.1f}s)"
+            return "TOUCHED", f"releasing ({now - rst:.1f}/{MIN_RELEASE_DURATION:.1f}s)"
         self.release_start_time[epc] = None
         if no_read: return "TOUCHED", "tag not read"
         if rssi_drop is not None and rssi_drop > RSSI_DROP_RELEASE_DB: return "TOUCHED", f"RSSI drop {rssi_drop:.1f} dB"
@@ -332,7 +337,11 @@ def do_detect(port: str | None = None, epc_targets: list[str] | None = None) -> 
 
             if metrics.stage == Stage.CALIBRATING:
                 pct = metrics.calibration_progress(now) * 100
-                rem = max(0, int(CALIBRATION_SECONDS - (now - metrics.calibration_start)))
+                cs = metrics.calibration_start
+                if cs is not None:
+                    rem = max(0, int(CALIBRATION_SECONDS - (now - cs)))
+                else:
+                    rem = int(CALIBRATION_SECONDS)
                 sys.stdout.write(f"\rCalibrating... {pct:.0f}% ({rem}s left)  ")
                 sys.stdout.flush()
 
@@ -379,9 +388,10 @@ def do_detect_nn(port: str | None = None, epc_targets: list[str] | None = None,
                   model_path: str = "touch_model.keras") -> None:
     """Touch detection using a trained neural network."""
     import json
+    from pathlib import Path as _Path
+
     import numpy as np
     from keras import models as kmodels
-    from pathlib import Path as _Path
 
     if not _Path(model_path).exists():
         print(f"Model not found: {model_path}")
@@ -389,7 +399,7 @@ def do_detect_nn(port: str | None = None, epc_targets: list[str] | None = None,
         sys.exit(1)
 
     print(f"Loading model: {model_path}...")
-    model = kmodels.load_model(model_path)
+    model: Any = kmodels.load_model(model_path)
     norm_path = _Path(model_path).with_suffix(".norm.json")
     with open(norm_path) as f:
         norm = json.load(f)
@@ -444,7 +454,6 @@ def do_detect_nn(port: str | None = None, epc_targets: list[str] | None = None,
 
     try:
         while True:
-            now = time.time()
             lines: list[str] = []
             for epc in selected_epcs:
                 buf = rssi_buf[epc]
