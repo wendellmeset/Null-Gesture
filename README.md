@@ -15,7 +15,7 @@ pip install -r requirements.txt
 
 ---
 
-### 2. RFID Reader (M7E Hecto) — Platform Guides
+### 2. RFID Reader (M7E Hecto): Platform Guides
 
 The project uses a SparkFun Simultaneous RFID Reader - M7E Hecto. The Python driver
 requires ThingMagic's Mercury API C library (free download, registration required).
@@ -32,13 +32,13 @@ Then follow your platform below.
 
 #### Linux
 
-**Option A — Pre-built wheel (fastest, same platform only):**
+**Option A - Pre-built wheel (fastest, same platform only):**
 
 ```bash
 pip install mercuryapi_src/dist/python_mercuryapi-*.whl
 ```
 
-**Option B — Build from source:**
+**Option B - Build from source:**
 
 ```bash
 # Prerequisites
@@ -79,13 +79,13 @@ cd ..
 
 #### Windows
 
-**Option A — Pre-built installer (easiest):**
+**Option A - Pre-built installer (easiest):**
 
 1. Download the latest Windows installer from:
    https://github.com/gotthardp/python-mercuryapi/releases
 2. Run the `.exe` installer for your Python version
 
-**Option B — Build from source (advanced):**
+**Option B - Build from source (advanced):**
 
 1. Download the Mercury API zip (see above)
 2. Download [pthreads-win32](https://sourceforge.net/projects/pthreads4w/files/pthreads-w32-2-9-1-release.zip/download)
@@ -129,7 +129,7 @@ python esp32_reader.py
 
 If the reader was previously used by the Universal Reader Assistant (URA),
 it may be stuck in streaming mode. Unplug and replug the USB-C cable,
-or run the script again — it will auto-detect and stop streaming.
+or run the script again (it will auto-detect and stop streaming).
 
 **USB power:**
 
