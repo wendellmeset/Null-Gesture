@@ -1,5 +1,4 @@
-import tensorflow as tf
-import tensorflow.keras as keras
+import keras
 from keras import layers
 from keras import metrics as keras_metrics
 
