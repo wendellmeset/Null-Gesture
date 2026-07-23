@@ -143,8 +143,15 @@ cython_debug/
 *~
 .DS_Store
 
+# Allow pre-built wheels for team sharing
+!wheels/
+
 # Project-specific files
 *.log
 *.pid
 *.seed
 *.pid.lock
+# RFID training artifacts (generated, not committed)
+touch_model.*
+touch_data.*
+rfid_log.csv
