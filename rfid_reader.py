@@ -10,6 +10,7 @@ from collections import deque
 from pathlib import Path
 import argparse
 import sys
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -594,7 +595,7 @@ def format_seconds(value):
 
 
 def main():
-    args = parse_args()
+    args: Any = parse_args()
     output_path = Path(args.output_dir).expanduser() / args.filename
 
     try:
