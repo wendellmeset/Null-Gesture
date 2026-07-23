@@ -24,7 +24,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 try:
     import mercury
@@ -41,8 +41,9 @@ except ImportError:
 
 try:
     import serial.tools.list_ports
+    _SERIAL_AVAILABLE = True
 except ImportError:
-    pass
+    _SERIAL_AVAILABLE = False
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -71,7 +72,6 @@ def _stop_streaming_via_serial(port: str) -> bool:
         _time.sleep(0.5)
         _ser.reset_input_buffer()
         _time.sleep(0.2)
-        # Stop command: MULTI_PROTOCOL_TAG_OP, stop option
         _ser.write(b'\xff\x03\x2f\x00\x00\x02\x5e\x86')
         _ser.flush()
         _time.sleep(2)
@@ -81,26 +81,30 @@ def _stop_streaming_via_serial(port: str) -> bool:
         _ser.close()
         _time.sleep(0.5)
         return True
-    except Exception:
+    except OSError:
         return False
+
+
+_MercuryReader = cast(Any, mercury).Reader
 
 
 def find_m7e_port() -> str | None:
     """Auto-detect the M7E reader serial port by probing with the Mercury API."""
     print("Scanning for M7E RFID reader...")
 
-    candidates = []
-    try:
-        for port_info in sorted(serial.tools.list_ports.comports()):
-            if not port_info.device:
-                continue
-            if port_info.vid is not None and port_info.pid is not None:
-                if (port_info.vid, port_info.pid) in KNOWN_VID_PID:
-                    candidates.append(port_info.device)
-                    print(f"  Found USB serial: {port_info.device}  "
-                          f"[VID:{port_info.vid:04X} PID:{port_info.pid:04X}]")
-    except NameError:
-        pass
+    candidates: list[str] = []
+
+    if _SERIAL_AVAILABLE:
+        for port_info in sorted(serial.tools.list_ports.comports()):  # type: ignore[possibly-undefined]
+            if (
+                port_info.device
+                and port_info.vid is not None
+                and port_info.pid is not None
+                and (port_info.vid, port_info.pid) in KNOWN_VID_PID
+            ):
+                candidates.append(port_info.device)
+                print(f"  Found USB serial: {port_info.device}  "
+                      f"[VID:{port_info.vid:04X} PID:{port_info.pid:04X}]")
 
     if not candidates:
         for pattern in ["/dev/ttyUSB*", "/dev/ttyACM*", "/dev/cu.usbserial*"]:
@@ -115,7 +119,7 @@ def find_m7e_port() -> str | None:
     for port in candidates:
         print(f"  Trying {port}...", end=" ")
         try:
-            reader = mercury.Reader(f"tmr://{port}", baudrate=115200)
+            reader = _MercuryReader(f"tmr://{port}", baudrate=115200)
             model = reader.get_model()
             version = reader.get_software_version()
             reader.stop_reading()
@@ -123,23 +127,23 @@ def find_m7e_port() -> str | None:
             return port
         except TypeError as exc:
             msg = str(exc)
-            if "Streaming" in msg:
-                print("streaming (stopping)...", end=" ")
-                if _stop_streaming_via_serial(port):
-                    try:
-                        reader = mercury.Reader(f"tmr://{port}", baudrate=115200)
-                        model = reader.get_model()
-                        version = reader.get_software_version()
-                        reader.stop_reading()
-                        print(f"✅ {model}  FW: {version}")
-                        return port
-                    except Exception as e2:
-                        print(f"stop failed ({e2})")
-                else:
-                    print("stop failed (serial)")
-            else:
+            if "Streaming" not in msg:
                 print(f"no response ({exc})")
-        except Exception as exc:
+                continue
+            print("streaming (stopping)...", end=" ")
+            if not _stop_streaming_via_serial(port):
+                print("stop failed (serial)")
+                continue
+            try:
+                reader = _MercuryReader(f"tmr://{port}", baudrate=115200)
+                model = reader.get_model()
+                version = reader.get_software_version()
+                reader.stop_reading()
+                print(f"✅ {model}  FW: {version}")
+                return port
+            except OSError as e2:
+                print(f"stop failed ({e2})")
+        except OSError as exc:
             print(f"no response ({exc})")
 
     print("  No M7E reader found on any port.")
@@ -179,7 +183,7 @@ class TagLogger:
 
         path = Path(filename)
         write_header = not path.exists() or path.stat().st_size == 0
-        self._file = open(filename, "a", newline="")
+        self._file = open(filename, "a", newline="")  # noqa: SIM115 - kept open for streaming writes
         self._writer = csv.DictWriter(self._file, fieldnames=self._fieldnames)
         if write_header:
             self._writer.writeheader()
@@ -196,11 +200,13 @@ class TagLogger:
         return True
 
     def log(self, tag: dict[str, Any]) -> None:
-        epc = tag.get("epc", "").hex() if isinstance(tag.get("epc"), bytes) else str(tag.get("epc", ""))
+        raw_epc = tag.get("epc", "")
+        epc = raw_epc.hex() if isinstance(raw_epc, bytes) else str(raw_epc)
         if not self.should_log(epc, tag.get("time_obj", time.time())):
             return
+        ts = tag.get("timestamp", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
         self._writer.writerow({
-            "Timestamp": tag.get("timestamp", datetime.now()),
+            "Timestamp": ts,
             "EPC": epc,
             "RSSI": tag.get("rssi", ""),
         })
@@ -214,6 +220,18 @@ class TagLogger:
 #  Main
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _connect_reader(port: str):
+    """Create a Mercury reader connection, handling streaming mode recovery."""
+    try:
+        return _MercuryReader(f"tmr://{port}", baudrate=115200)
+    except TypeError as exc:
+        if "Streaming" not in str(exc):
+            raise
+        print("streaming detected, stopping...")
+        _stop_streaming_via_serial(port)
+        return _MercuryReader(f"tmr://{port}", baudrate=115200)
+
+
 def do_test(port: str | None = None) -> None:
     """Test mode: find reader, print info, trial scan, then exit."""
     if port is None:
@@ -223,22 +241,12 @@ def do_test(port: str | None = None) -> None:
     else:
         print(f"Testing reader on port: {port}")
 
-    # If reader is in streaming mode, stop it via raw serial first
-    try:
-        reader = mercury.Reader(f"tmr://{port}", baudrate=115200)
-    except TypeError as exc:
-        if "Streaming" in str(exc):
-            print("streaming detected, stopping...")
-            _stop_streaming_via_serial(port)
-            reader = mercury.Reader(f"tmr://{port}", baudrate=115200)
-        else:
-            raise
-
+    reader = _connect_reader(port)
     model = reader.get_model()
     version = reader.get_software_version()
     serial = reader.get_serial()
 
-    print(f"\n✅ Reader connected!")
+    print("\n✅ Reader connected!")
     print(f"   Port:     {port}")
     print(f"   Model:    {model}")
     print(f"   Firmware: {version}")
@@ -248,9 +256,9 @@ def do_test(port: str | None = None) -> None:
     print(f"   Regions:  {regions}")
 
     reader.set_region("NA")
-    print(f"   Region:   NA ✅")
+    print("   Region:   NA ✅")
 
-    print(f"\n   Testing inventory scan (2 seconds)...")
+    print("\n   Testing inventory scan (2 seconds)...")
     reader.set_read_plan([1], "GEN2")
     tags = reader.read(timeout=2000)
     if tags:
@@ -277,42 +285,34 @@ def do_scan(port: str | None = None) -> None:
     logger = TagLogger(CSV_FILENAME)
 
     try:
-        reader = mercury.Reader(f"tmr://{port}", baudrate=115200)
-    except TypeError as exc:
-        if "Streaming" in str(exc):
-            print("streaming detected, stopping...")
-            _stop_streaming_via_serial(port)
-            reader = mercury.Reader(f"tmr://{port}", baudrate=115200)
-        else:
-            raise
+        reader = _connect_reader(port)
 
-    model = reader.get_model()
-    version = reader.get_software_version()
-    print(f"✅ {model} — FW: {version}")
-    print(f"📝 Logging to: {CSV_FILENAME}")
-    print("🔍 Scanning for tags... Press Ctrl+C to stop.\n")
+        model = reader.get_model()
+        version = reader.get_software_version()
+        print(f"✅ {model} — FW: {version}")
+        print(f"📝 Logging to: {CSV_FILENAME}")
+        print("🔍 Scanning for tags... Press Ctrl+C to stop.\n")
 
-    reader.set_region("NA")
-    reader.set_read_plan([1], "GEN2")
+        reader.set_region("NA")
+        reader.set_read_plan([1], "GEN2")
 
-    tag_count = 0
+        tag_count = 0
 
-    def on_tag(tag):
-        nonlocal tag_count
-        tag_count += 1
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        epc = tag.epc.hex().upper()
-        rssi = tag.rssi
-        print(f"[{ts}]  EPC: {epc}  RSSI: {rssi} dBm")
+        def on_tag(tag):
+            nonlocal tag_count
+            tag_count += 1
+            ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            epc = tag.epc.hex().upper()
+            rssi = tag.rssi
+            print(f"[{ts}]  EPC: {epc}  RSSI: {rssi} dBm")
 
-        logger.log({
-            "epc": tag.epc,
-            "rssi": tag.rssi,
-            "timestamp": ts,
-            "time_obj": time.time(),
-        })
+            logger.log({
+                "epc": tag.epc,
+                "rssi": tag.rssi,
+                "timestamp": ts,
+                "time_obj": time.time(),
+            })
 
-    try:
         reader.start_reading(callback=on_tag, on_time=1000, off_time=0)
 
         try:
@@ -324,7 +324,7 @@ def do_scan(port: str | None = None) -> None:
             reader.stop_reading()
             print(f"\nTotal tags seen: {tag_count}")
 
-    except Exception as exc:
+    except OSError as exc:
         print(f"\n❌ Error: {exc}")
         sys.exit(1)
     finally:
