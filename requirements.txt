@@ -5,3 +5,5 @@ pyserial
 scikit-learn
 joblib
 keras
+numpy
+tensorflow
