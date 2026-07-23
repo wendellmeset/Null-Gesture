@@ -209,7 +209,7 @@ def main(serial_port, baud_rate, tcp_host='0.0.0.0', tcp_port=9999, print_unpars
 if __name__ == "__main__":
     # Example: change these to match your setup
     main(
-        serial_port='/dev/ttyUSB0',   # or 'COM3' on Windows
+        serial_port='/dev/cu.usbserial-5B1F0089541',   # or 'COM3' on Windows
         baud_rate=115200,
         tcp_host='0.0.0.0',           # listen on all interfaces
         tcp_port=9999,
