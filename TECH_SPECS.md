@@ -2,10 +2,12 @@
 ## Components
 
 ### IMU
+- ESP32 Core 2 board +  BMI270 IMU
 - Placed on back of left hand
 - Measures change in velocity, orientation
 
 ### RFID
+- SparkFun Simultaneous RFID Reader - M7E Hecto
 - Placed on thumb
 - Checks for contact
 
