@@ -6,10 +6,8 @@ import statistics
 import threading
 from dataclasses import dataclass
 import time
-import tkinter as tk
 from collections import deque
 from pathlib import Path
-from tkinter import ttk
 import argparse
 import sys
 
@@ -170,10 +168,10 @@ class LiveTagMetrics:
         self.window_samples = {epc: deque() for epc in selected_epcs}
         self.calibration_samples = {epc: [] for epc in selected_epcs}
         self.calibration_read_counts = {epc: 0 for epc in selected_epcs}
-        self.baseline_rssi = {epc: None for epc in selected_epcs}
-        self.baseline_rate = {epc: None for epc in selected_epcs}
-        self.last_seen = {epc: None for epc in selected_epcs}
-        self.touch_state = {epc: False for epc in selected_epcs}
+        self.baseline_rssi: dict[str, float | None] = {epc: None for epc in selected_epcs}
+        self.baseline_rate: dict[str, float | None] = {epc: None for epc in selected_epcs}
+        self.last_seen: dict[str, float | None] = {epc: None for epc in selected_epcs}
+        self.touch_state: dict[str, bool] = {epc: False for epc in selected_epcs}
         self.stage = Stage.WAITING
         self.calibration_start = None
         self.calibration_end = None
