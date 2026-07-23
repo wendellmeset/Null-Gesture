@@ -32,21 +32,52 @@ def parse_sample(line):
 
 def serial_worker(port, baud, samples, stop_event, print_unparsed):
     try:
-        with serial.Serial(port, baudrate=baud, timeout=0.1) as ser:
+        with serial.Serial(
+            port,
+            baudrate=baud,
+            timeout=0.1,
+            rtscts=False,
+            dsrdtr=False,
+        ) as ser:
+            # Prevent DTR reset on macOS/Linux (use cu.* device, not tty.*)
+            ser.dtr = False
+            ser.rts = False
             ser.reset_input_buffer()
+
+            line_count = 0
+            matched_count = 0
             while not stop_event.is_set():
                 raw = ser.readline()
                 if not raw:
                     continue
 
                 line = raw.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+
+                line_count += 1
+
+                # Always send raw line to clients
+                samples.put(("raw", line))
+
+                # Also parse and send structured sample if it matches
                 sample = parse_sample(line)
                 if sample is not None:
-                    samples.put((time.monotonic(), *sample))
+                    matched_count += 1
+                    samples.put(("sample", time.monotonic(), *sample))
                 elif print_unparsed:
-                    print(line)
+                    # Prefix with ⚠ so it's easy to spot non-IMU lines
+                    print(f"⚠ UNPARSED: {line}")
+
+                if line_count % 500 == 0:
+                    print(f"[reader] {line_count} lines read, {matched_count} matched, {samples.qsize()} queued")
     except serial.SerialException as exc:
+        print(f"[reader] SERIAL ERROR: {exc}")
         samples.put(("error", str(exc)))
+    except Exception as exc:
+        print(f"[reader] UNEXPECTED ERROR: {exc}")
+        import traceback
+        traceback.print_exc()
 
 # ---------- Streaming server (broadcaster) ----------
 class DataBroadcaster:
@@ -93,25 +124,32 @@ class DataBroadcaster:
             except queue.Empty:
                 continue
 
-            if isinstance(item, tuple) and item and item[0] == "error":
-                # Send error to all clients
-                self.broadcast({"type": "error", "message": item[1]})
+            if not isinstance(item, tuple) or not item:
                 continue
 
-            # item is (timestamp, ax, ay, az, gx, gy, gz)
-            if len(item) == 7:
-                sample = {
-                    "type": "sample",
-                    "timestamp": item[0],
-                    "ax": item[1],
-                    "ay": item[2],
-                    "az": item[3],
-                    "gx": item[4],
-                    "gy": item[5],
-                    "gz": item[6]
-                }
-                # print(sample)
-                self.broadcast(sample)
+            kind = item[0]
+
+            if kind == "error":
+                self.broadcast({"type": "error", "message": item[1]})
+
+            elif kind == "raw":
+                # Forward the raw line as-is
+                self.broadcast({"type": "raw", "data": item[1]})
+
+            elif kind == "sample":
+                # item is ("sample", timestamp, ax, ay, az, gx, gy, gz)
+                if len(item) == 8:
+                    sample = {
+                        "type": "sample",
+                        "timestamp": item[1],
+                        "ax": item[2],
+                        "ay": item[3],
+                        "az": item[4],
+                        "gx": item[5],
+                        "gy": item[6],
+                        "gz": item[7]
+                    }
+                    self.broadcast(sample)
 
     def stop(self):
         self.running = False
@@ -151,8 +189,8 @@ def run_tcp_server(host, port, broadcaster):
     print(f"Data streaming server listening on {host}:{port}")
     try:
         server.serve_forever()
-    except KeyboardInterrupt:
-        pass
+    except (OSError, Exception) as exc:
+        print(f"[server] Error: {exc}")
     finally:
         server.shutdown()
         server.server_close()
