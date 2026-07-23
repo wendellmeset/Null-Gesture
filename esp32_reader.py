@@ -1,17 +1,17 @@
-import re
-import serial
-import time
 import json
-from typing import Pattern
-import threading
 import queue
+import re
+import threading
+import time
+from socketserver import StreamRequestHandler, ThreadingTCPServer
 from typing import cast
-from socketserver import ThreadingTCPServer, StreamRequestHandler
+
+import serial
 
 # ---------- Original parsing code ----------
 FLOAT_RE: str = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
 
-SAMPLE_RE: Pattern[str] = re.compile(
+SAMPLE_RE: re.Pattern[str] = re.compile(
     rf"accel\[g\]\s+x=\s*({FLOAT_RE})\s+y=\s*({FLOAT_RE})\s+z=\s*({FLOAT_RE})"
     rf"\s+\|\s+gyro\[dps\]\s+x=\s*({FLOAT_RE})\s+y=\s*({FLOAT_RE})\s+z=\s*({FLOAT_RE})"
 )
@@ -74,7 +74,7 @@ def serial_worker(port, baud, samples, stop_event, print_unparsed):
     except serial.SerialException as exc:
         print(f"[reader] SERIAL ERROR: {exc}")
         samples.put(("error", str(exc)))
-    except Exception as exc:
+    except (OSError, UnicodeError, ValueError, TypeError) as exc:
         print(f"[reader] UNEXPECTED ERROR: {exc}")
         import traceback
         traceback.print_exc()
@@ -136,9 +136,8 @@ class DataBroadcaster:
                 # Forward the raw line as-is
                 self.broadcast({"type": "raw", "data": item[1]})
 
-            elif kind == "sample":
+            elif kind == "sample" and len(item) == 8:
                 # item is ("sample", timestamp, ax, ay, az, gx, gy, gz)
-                if len(item) == 8:
                     sample = {
                         "type": "sample",
                         "timestamp": item[1],
@@ -189,7 +188,7 @@ def run_tcp_server(host, port, broadcaster):
     print(f"Data streaming server listening on {host}:{port}")
     try:
         server.serve_forever()
-    except (OSError, Exception) as exc:
+    except (OSError, ConnectionError) as exc:
         print(f"[server] Error: {exc}")
     finally:
         server.shutdown()
@@ -247,7 +246,7 @@ def main(serial_port, baud_rate, tcp_host='0.0.0.0', tcp_port=9999, print_unpars
 if __name__ == "__main__":
     # Example: change these to match your setup
     main(
-        serial_port='/dev/cu.usbserial-5B1F0089541',   # or 'COM3' on Windows
+        serial_port='/dev/cu.usbserial-5B1F0089541',   # or 'COM3' on Windows, or '/dev/ttyUSB0' on Linux
         baud_rate=115200,
         tcp_host='0.0.0.0',           # listen on all interfaces
         tcp_port=9999,
