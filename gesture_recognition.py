@@ -14,7 +14,6 @@ import queue
 import socket
 import json
 import sys
-import select
 import numpy as np
 import tensorflow as tf
 import keras
@@ -149,7 +148,7 @@ def get_or_train_fusion_model(force_retrain=False):
         epochs=30,
         batch_size=32,
         validation_split=0.2,
-        verbose="1"
+        verbose=1          # ✅ integer, not string
     )
     model.save(model_path)
     print(f"Fusion model saved as {model_path}")
@@ -171,6 +170,7 @@ _touch_lock = threading.Lock()
 _touch_flag = 0.0
 
 def set_touch_flag(value):
+    """Call this from your RFID thread to update the touch flag (0 or 1)."""
     global _touch_flag
     with _touch_lock:
         _touch_flag = float(value)
@@ -178,6 +178,20 @@ def set_touch_flag(value):
 def get_touch_flag():
     with _touch_lock:
         return _touch_flag
+
+# Keyboard input thread (cross‑platform)
+def keyboard_listener(stop_event):
+    """Reads keyboard input and toggles touch flag when 't' is pressed."""
+    while not stop_event.is_set():
+        try:
+            key = sys.stdin.read(1)
+            if key == 't':
+                new_val = 1.0 - get_touch_flag()
+                set_touch_flag(new_val)
+                print(f"\nTouch flag toggled to {new_val}")
+        except:
+            # If stdin is closed, exit
+            break
 
 def imu_receiver(stop_event, imu_queue):
     try:
@@ -235,6 +249,10 @@ def main():
     imu_thread = threading.Thread(target=imu_receiver, args=(stop_event, imu_queue))
     imu_thread.start()
 
+    # Start keyboard listener thread (for toggling touch flag)
+    keyboard_thread = threading.Thread(target=keyboard_listener, args=(stop_event,), daemon=True)
+    keyboard_thread.start()
+
     print("\n--- Real‑time gesture recognition started ---")
     print("Touch flag can be updated via set_touch_flag(value).")
     print("Press 't' in this terminal to toggle touch flag (demo), or Ctrl+C to quit.\n")
@@ -244,18 +262,12 @@ def main():
 
     try:
         while not stop_event.is_set():
+            # Drain IMU queue
             while not imu_queue.empty():
                 imu_samples.append(imu_queue.get())
 
             now = time.monotonic()
             imu_samples = [s for s in imu_samples if now - s[0] < 10.0]
-
-            if select.select([sys.stdin], [], [], 0)[0]:
-                key = sys.stdin.read(1)
-                if key == 't':
-                    new_val = 1.0 - get_touch_flag()
-                    set_touch_flag(new_val)
-                    print(f"Touch flag toggled to {new_val}")
 
             if len(imu_samples) >= IMU_TIMESTAMPS:
                 start_time = now - IMU_SECONDS
@@ -271,14 +283,14 @@ def main():
 
                 touch_flag = get_touch_flag()
 
-                # --- Ensure inputs are numpy arrays of correct shape ---
+                # Fusion input
                 fusion_input = {
-                    'orientation_probs': orient_probs,          # shape (1,5)
-                    'motion_probs': motion_probs,              # shape (1,7)
-                    'touch_flag': np.array([[touch_flag]], dtype=np.float32)  # (1,1)
+                    'orientation_probs': orient_probs,
+                    'motion_probs': motion_probs,
+                    'touch_flag': np.array([[touch_flag]], dtype=np.float32)
                 }
 
-                final_probs = fusion_model.predict(fusion_input, verbose="0")[0]
+                final_probs = fusion_model.predict(fusion_input, verbose=0)[0]
                 gesture_idx = np.argmax(final_probs)
                 confidence = final_probs[gesture_idx]
 
@@ -294,6 +306,7 @@ def main():
     finally:
         stop_event.set()
         imu_thread.join(timeout=2)
+        keyboard_thread.join(timeout=1)
         print("Stopped.")
 
 if __name__ == "__main__":

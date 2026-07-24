@@ -544,8 +544,12 @@ class TouchDetectorGui:
 
     def _style_detector(self, widget: tk.Label, status: str):
         if status == "TOUCHED":
+            from gesture_recognition import set_touch_flag
+            set_touch_flag(1.0)
             widget.configure(bg="#991B1B", fg="white")
         elif status == "CLEAR":
+            from gesture_recognition import set_touch_flag
+            set_touch_flag(0.0)
             widget.configure(bg="#DCFCE7", fg="#14532D")
         elif status == "NO BASELINE":
             widget.configure(bg="#FEF3C7", fg="#78350F")
