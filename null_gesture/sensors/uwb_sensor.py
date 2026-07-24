@@ -9,6 +9,7 @@ and two DWM3001CDK boards connected over USB.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -28,13 +29,9 @@ logger = logging.getLogger("null_gesture.sensors.uwb")
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _UWB_TOOLS = _PROJECT_ROOT / "uwb-qorvo-tools"
 
-# ── FiRa TWR script path ────────────────────────────────────────────────────
+# ── FiRa TWR script ─────────────────────────────────────────────────────────
 _TWR_SCRIPT = (
-    _UWB_TOOLS
-    / "scripts"
-    / "fira"
-    / "run_fira_test_periodic_tx"
-    / "run_fira_test_periodic_tx.py"
+    _UWB_TOOLS / "scripts" / "fira" / "run_fira_twr" / "run_fira_twr.py"
 )
 
 
@@ -42,22 +39,42 @@ def _has_uwb_tools() -> bool:
     return _UWB_TOOLS.exists() and _TWR_SCRIPT.exists()
 
 
-# ── Range log line parser ───────────────────────────────────────────────────
-_RANGE_LINE_RE = re.compile(
-    r"Range\s*\[(?P<seq>\d+)\].*?"
-    r"distance\s*=\s*(?P<dist>[\d.]+)\s*cm.*?"
-    r"status\s*=\s*(?P<status>\w+)"
-)
+# ── Output parser ───────────────────────────────────────────────────────────
+# The TWR script with --stats prints per-measurement output like:
+#   <measurement 1>:
+#           mac:            0x....
+#           status:         Ok
+#           distance:       123.45 cm
 
-RANGE_SAMPLE_KEYS = ("sequence", "distance_cm", "status", "timestamp")
+_MEASUREMENT_HEADER_RE = re.compile(r"<\s*measurement\s+(\d+)\s*>:")
+_DISTANCE_RE = re.compile(r"distance:\s+([\d.]+)\s+cm")
+_STATUS_RE = re.compile(r"status:\s+(\w+)")
+_SEQUENCE_RE = re.compile(r"sequence\s+n?:\s+(\d+)")
+
+
+def _compute_ranging_span_ms(fps: float) -> int:
+    """Convert desired FPS to ranging interval in milliseconds."""
+    return max(1, int(round(1000.0 / fps)))
+
+
+def _build_env() -> dict[str, str]:
+    """Build environment dict with UWB tools on PYTHONPATH."""
+    env = os.environ.copy()
+    paths = [
+        str(_UWB_TOOLS / "lib" / "uwb-uci"),
+        str(_UWB_TOOLS / "lib" / "uqt-utils"),
+        str(_UWB_TOOLS),
+    ]
+    existing = env.get("PYTHONPATH", "")
+    if existing:
+        paths.append(existing)
+    env["PYTHONPATH"] = ":".join(paths)
+    env["UWB_TOOLS"] = str(_UWB_TOOLS)
+    return env
 
 
 class UWBRanger:
-    """Manages a UWB FiRa TWR ranging session between two DWM3001CDK boards.
-
-    The controller board is on one hand, controlee on the other.
-    Distance measurements are streamed in real time via subprocess stdout.
-    """
+    """Manages a UWB FiRa TWR ranging session between two DWM3001CDK boards."""
 
     def __init__(self, config: UWBConfig | None = None) -> None:
         self.config = config or default_uwb_config
@@ -66,9 +83,9 @@ class UWBRanger:
         self._controlee_proc: subprocess.Popen | None = None
         self._running = False
         self._sample_count = 0
-        self._session_dir: Path | None = None
         self._on_sample: Callable[[dict], None] | None = None
-        self._parser_seq: int = -1
+        self._current_seq: int = -1
+        self._env = _build_env()
 
     @property
     def connected(self) -> bool:
@@ -89,7 +106,7 @@ class UWBRanger:
         """Start a FiRa TWR session.
 
         Args:
-            controller_port: Serial port of the controller board (e.g. /dev/ttyACM0).
+            controller_port: Serial port of the controller board.
             controlee_port: Serial port of the controlee board.
             duration: Session duration in seconds. 0 = run until stop().
             on_sample: Optional callback for each range sample.
@@ -97,7 +114,7 @@ class UWBRanger:
         if not _has_uwb_tools():
             logger.error(
                 "UWB tools not found at %s. Clone the UWB_lab repo's "
-                "uwb-qorvo-tools/ directory into the project root.",
+                "uwb-qorvo-tools/ directory.",
                 _UWB_TOOLS,
             )
             return False
@@ -108,45 +125,33 @@ class UWBRanger:
         if duration <= 0:
             duration = 3600  # Long default for indefinite streaming
 
-        controlee_duration = duration + 5 + 3  # extra + startup delay
-
-        python = sys.executable
+        controlee_duration = duration + 10
         cfg = self.config
+        python = sys.executable
+        ranging_span = _compute_ranging_span_ms(cfg.sample_rate_hz)
 
-        # Build the UCI library PYTHONPATH components
-        env_paths = [
-            str(_UWB_TOOLS / "lib" / "uwb-uci"),
-            str(_UWB_TOOLS / "lib" / "uqt-utils"),
-            str(_UWB_TOOLS),
-        ]
-        if "PYTHONPATH" in sys.modules.get("os", __import__("os")).environ:
-            env_paths.append(__import__("os").environ["PYTHONPATH"])
-
-        import os
-        env = os.environ.copy()
-        env["PYTHONPATH"] = ":".join(env_paths)
-        env["UWB_TOOLS"] = str(_UWB_TOOLS)
-
-        # Start controlee first
-        controlee_cmd = [
-            python,
-            str(_TWR_SCRIPT),
-            "-p", controlee_port,
+        # Common args for both controller and controlee
+        common = [
+            python, "-u", str(_TWR_SCRIPT),
+            "--channel", str(cfg.uwb_channel),
             "--preamble-idx", str(cfg.preamble_code),
-            "-d", str(controlee_duration),
+            "--aoa-report", "all-disabled",
             "--slot-span", str(cfg.slot_span),
             "--slots-per-rr", str(cfg.slots_per_rr),
-            "--channel", str(cfg.uwb_channel),
-            "--controlee",
+            "--ranging-span", str(ranging_span),
             "--stats",
         ]
 
+        controlee_cmd = common + ["-p", controlee_port, "-t", str(controlee_duration), "--controlee"]
+        controller_cmd = common + ["-p", controller_port, "-t", str(duration)]
+
+        # Start controlee first
         try:
             self._controlee_proc = subprocess.Popen(
                 controlee_cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                env=env,
+                env=self._env,
                 start_new_session=True,
             )
             logger.info("UWB controlee started (PID %d)", self._controlee_proc.pid)
@@ -158,19 +163,7 @@ class UWBRanger:
         # Wait startup delay
         time.sleep(3.0)
 
-        # Start controller
-        controller_cmd = [
-            python,
-            str(_TWR_SCRIPT),
-            "-p", controller_port,
-            "--preamble-idx", str(cfg.preamble_code),
-            "-d", str(duration),
-            "--slot-span", str(cfg.slot_span),
-            "--slots-per-rr", str(cfg.slots_per_rr),
-            "--channel", str(cfg.uwb_channel),
-            "--stats",
-        ]
-
+        # Start controller (capture stdout for range data)
         try:
             self._controller_proc = subprocess.Popen(
                 controller_cmd,
@@ -178,7 +171,7 @@ class UWBRanger:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                env=env,
+                env=self._env,
                 start_new_session=True,
             )
             logger.info("UWB controller started (PID %d)", self._controller_proc.pid)
@@ -188,14 +181,13 @@ class UWBRanger:
             self._running = False
             return False
 
-        # Start reader thread
         self._reader_thread = threading.Thread(
             target=self._read_loop,
             name="uwb-reader",
             daemon=True,
         )
         self._reader_thread.start()
-        logger.info("UWB ranging session active")
+        logger.info("UWB ranging session active (%d ms interval)", ranging_span)
         return True
 
     def _read_loop(self) -> None:
@@ -203,13 +195,40 @@ class UWBRanger:
         assert self._controller_proc is not None
         assert self._controller_proc.stdout is not None
 
+        current_seq = -1
+        current_dist = None
+        current_status = None
+
         try:
             for line in self._controller_proc.stdout:
                 if not self._running:
                     break
-                line = line.strip()
-                sample = self._parse_line(line)
-                if sample is not None:
+                line = line.rstrip()
+
+                # Track sequence number
+                sm = _SEQUENCE_RE.search(line)
+                if sm:
+                    current_seq = int(sm.group(1))
+
+                # Track distance
+                dm = _DISTANCE_RE.search(line)
+                if dm:
+                    current_dist = float(dm.group(1))
+
+                # Track status
+                stm = _STATUS_RE.search(line)
+                if stm:
+                    current_status = stm.group(1)
+
+                # When we have a complete measurement (distance + status),
+                # emit the sample
+                if current_dist is not None and current_status is not None:
+                    sample = {
+                        "sequence": current_seq,
+                        "distance_cm": current_dist,
+                        "status": current_status,
+                        "timestamp": time.time(),
+                    }
                     self._buffer.append(sample)
                     self._sample_count += 1
                     if self._on_sample:
@@ -218,29 +237,14 @@ class UWBRanger:
                         except Exception as exc:
                             logger.debug("Sample callback error: %s", exc)
                     self._prune()
+                    # Reset for next measurement
+                    current_dist = None
+                    current_status = None
+
         except (OSError, ValueError) as exc:
             logger.error("UWB read error: %s", exc)
         finally:
             self._running = False
-
-    def _parse_line(self, line: str) -> dict | None:
-        """Parse a controller output line for range data."""
-        m = _RANGE_LINE_RE.search(line)
-        if m is None:
-            return None
-        try:
-            seq = int(m.group("seq"))
-            dist = float(m.group("dist"))
-            status = m.group("status")
-        except (ValueError, IndexError):
-            return None
-
-        return {
-            "sequence": seq,
-            "distance_cm": dist,
-            "status": status,
-            "timestamp": time.time(),
-        }
 
     def _prune(self) -> None:
         cutoff = time.time() - self.config.window_seconds * 2

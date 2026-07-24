@@ -26,6 +26,7 @@ class IMUClient:
     def __init__(self, config: IMUConfig | None = None) -> None:
         self.config = config or default_imu_config
         self._socket: socket.socket | None = None
+        self._rbuf: bytearray = bytearray()
         self._buffer: deque[tuple[float, np.ndarray]] = deque()
         self._connected = False
         self._sample_count = 0
@@ -64,15 +65,23 @@ class IMUClient:
         if not self._socket or not self._connected:
             return None
         try:
-            line = b""
-            while not line.endswith(b"\n"):
+            # Check if we already have a complete line in the buffer
+            while b"\n" not in self._rbuf:
                 chunk = self._socket.recv(4096)
                 if not chunk:
                     self._connected = False
                     logger.warning("IMU server closed connection")
                     return None
-                line += chunk
-            data = json.loads(line.decode("utf-8").strip())
+                self._rbuf.extend(chunk)
+
+            # Extract first complete line
+            idx = self._rbuf.index(b"\n")
+            line = bytes(self._rbuf[:idx])
+            del self._rbuf[: idx + 1]
+
+            if not line.strip():
+                return None
+            data = json.loads(line.decode("utf-8"))
             return data
         except (socket.timeout, json.JSONDecodeError, UnicodeDecodeError):
             return None
