@@ -346,9 +346,13 @@ class LiveTrainWindow:
     def _update_prediction(self, window: np.ndarray):
         from null_gesture.config import GESTURES
         imu_t = self._preprocess_imu(window)
+        dev = next(self.model.parameters()).device
         with torch.no_grad():
             _, probs = self.model.predict(
-                imu_t, torch.zeros(1, 60, 2), torch.zeros(1, 100, 1), modalities="imu",
+                imu_t,
+                torch.zeros(1, 60, 2, device=dev),
+                torch.zeros(1, 100, 1, device=dev),
+                modalities="imu",
             )
         probs_np = probs[0].cpu().numpy()
         self.pred_plot.clear()
@@ -370,7 +374,8 @@ class LiveTrainWindow:
     def _preprocess_imu(self, window: np.ndarray) -> torch.Tensor:
         if self.preprocessor is not None:
             window = (window - self.preprocessor._imu_mean) / self.preprocessor._imu_std
-        return torch.from_numpy(window).float().unsqueeze(0)
+        dev = next(self.model.parameters()).device
+        return torch.from_numpy(window).float().unsqueeze(0).to(dev)
 
     def _train_and_predict(self):
         total = len(self.labels)
