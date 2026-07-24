@@ -183,11 +183,11 @@ def cmd_collect(args: argparse.Namespace) -> int:
 
     collector = DataCollector(args.dataset)
 
-    # Determine which sensors to use
+    # Determine which sensors to use (supports "all", "imu", "rfid", "uwb", "imu+uwb", etc.)
     sensors = (args.sensors or "all").lower()
-    use_imu = sensors in ("all", "imu")
-    use_rfid = sensors in ("all", "rfid")
-    use_uwb = sensors in ("all", "uwb")
+    use_imu = "imu" in sensors
+    use_rfid = "rfid" in sensors
+    use_uwb = "uwb" in sensors
 
     imu_host = args.imu_host if use_imu else None
     rfid_port = args.rfid_port if use_rfid else None
@@ -500,8 +500,8 @@ def parse_args() -> argparse.Namespace:
     # ── collect ──────────────────────────────────────────────────────
     cp = sub.add_parser("collect", help="Collect training data from sensors")
     cp.add_argument("--dataset", required=True, help="Dataset name for output directory")
-    cp.add_argument("--sensors", choices=["all", "imu", "rfid", "uwb"], default="all",
-                    help="Which sensors to record from (default: all)")
+    cp.add_argument("--sensors", default="all",
+                    help="Which sensors to record: all, imu, rfid, uwb, imu+uwb, etc. (default: all)")
     cp.add_argument("--imu-host", default="127.0.0.1", help="ESP32 TCP host")
     cp.add_argument("--rfid-port", help="M7E serial port (auto-detect if omitted)")
     cp.add_argument("--rfid-epcs", help="Comma-separated target EPCs to filter")

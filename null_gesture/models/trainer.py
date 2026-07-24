@@ -252,7 +252,7 @@ class Trainer:
         device: str | None = None,
     ) -> tuple[GestureFusionModel, dict]:
         """Load a trained model from checkpoint. Returns (model, checkpoint_dict)."""
-        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         config = ckpt.get("config", default_model_config)
         dev = device or ("cuda" if torch.cuda.is_available() else "cpu")
         model = GestureFusionModel(config).to(dev)
