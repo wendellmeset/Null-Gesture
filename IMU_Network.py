@@ -25,7 +25,7 @@ x = layers.GlobalAveragePooling1D()(x)
 orient_out = layers.Dense(5, activation='softmax', name='orientation')(x)
 
 
-# Layer to handle the 6 movements (static, forward, backward, left, right,up, down)
+# Layer to handle the 7 movements (static, forward, backward, left, right,up, down)
 motion_out = layers.Dense(7, activation='softmax', name='motion')(x)
 
 model = keras.Model(inputs=inputs, outputs=[orient_out, motion_out])
