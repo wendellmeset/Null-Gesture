@@ -487,7 +487,7 @@ def cmd_live(args: argparse.Namespace) -> int:
         return 1
 
     app = __import__("PyQt6.QtWidgets", fromlist=["QApplication"]).QApplication(_sys.argv)
-    win = LiveTrainWindow(gestures, imu_host=args.imu_host, window_seconds=args.window)
+    win = LiveTrainWindow(gestures, imu_host=args.imu_host, window_seconds=args.window, reps=args.reps)
     win.show()
     return app.exec()
 
@@ -557,6 +557,8 @@ def parse_args() -> argparse.Namespace:
                     help="Comma-separated gestures to train (default: pull,push)")
     lp.add_argument("--window", type=float, default=2.0,
                     help="Window length in seconds (default: 2.0)")
+    lp.add_argument("--reps", type=int, default=10,
+                    help="Repetitions per gesture (default: 10)")
 
     return parser.parse_args()
 
