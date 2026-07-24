@@ -476,18 +476,13 @@ def _run_terminal(
 
 
 def cmd_live(args: argparse.Namespace) -> int:
-    """Interactive real-time training with live feedback GUI."""
+    """Real-time IMU gesture detection — no training needed."""
     import sys as _sys
 
-    from null_gesture.gui.live_train import LiveTrainWindow
-
-    gestures = [g.strip() for g in args.gestures.split(",") if g.strip()]
-    if len(gestures) < 2:
-        print("Need at least 2 gestures (e.g. --gestures pull,push)")
-        return 1
+    from null_gesture.gui.live_train import LiveDetectWindow
 
     app = __import__("PyQt6.QtWidgets", fromlist=["QApplication"]).QApplication(_sys.argv)
-    win = LiveTrainWindow(gestures, imu_host=args.imu_host, window_seconds=args.window, reps=args.reps)
+    win = LiveDetectWindow(imu_host=args.imu_host)
     win.show()
     return app.exec()
 
@@ -550,15 +545,10 @@ def parse_args() -> argparse.Namespace:
     )
     pp.add_argument("--no-gui", action="store_true", help="Run in terminal mode")
     pp.add_argument("--cpu", action="store_true", help="Force CPU inference")
+
     # ── live ─────────────────────────────────────────────────────────
-    lp = sub.add_parser("live", help="Interactive real-time training with live feedback")
+    lp = sub.add_parser("live", help="Real-time IMU gesture detection (no training needed)")
     lp.add_argument("--imu-host", default="127.0.0.1", help="ESP32 TCP host")
-    lp.add_argument("--gestures", default="pull,push",
-                    help="Comma-separated gestures to train (default: pull,push)")
-    lp.add_argument("--window", type=float, default=2.0,
-                    help="Window length in seconds (default: 2.0)")
-    lp.add_argument("--reps", type=int, default=10,
-                    help="Repetitions per gesture (default: 10)")
 
     return parser.parse_args()
 
@@ -577,12 +567,12 @@ def main() -> int:
     elif args.command == "live":
         return cmd_live(args)
     else:
-        print("Please specify a command: debug, collect, train, or predict")
+        print("Please specify a command: debug, collect, train, predict, or live")
         print("Run with --help for details.")
         return 1
 
-
 if __name__ == "__main__":
+    import sys as _sys
     from null_gesture.utils.logging import setup_logging
     setup_logging()
-    sys.exit(main())
+    _sys.exit(main())
