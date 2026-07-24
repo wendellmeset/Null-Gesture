@@ -155,3 +155,8 @@ cython_debug/
 touch_model.*
 touch_data.*
 rfid_log.csv
+# Null-Gesture runtime artifacts
+data/
+models/
+logs/
+uwb-qorvo-tools/

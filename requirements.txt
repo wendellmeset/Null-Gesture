@@ -1,9 +1,19 @@
-numpy
-PyQt6
-pyqtgraph
-pyserial
-scikit-learn
-joblib
-keras
-numpy
-tensorflow
+# Core
+numpy>=1.24
+torch>=2.0
+
+# Sensors
+pyserial>=3.5
+# python-mercuryapi  (install via install_mercury.sh — manual build from C library)
+
+# GUI
+PyQt6>=6.5
+pyqtgraph>=0.13
+
+# Training utilities
+scikit-learn>=1.3
+joblib>=1.3
+
+# UWB (Qorvo DWM3001CDK — requires uwb-qorvo-tools/ in project root)
+# The UCI Python library runs directly from the tools directory.
+colorama>=0.4

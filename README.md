@@ -1,142 +1,222 @@
-# Null-Gesture
+# Null-Gesture v2.0
 
-Gesture-detecting program using neural networks, IMU, ESP32, and RFID.
+**Multi-modal gesture detection without a camera.**  
+IMU (ESP32+BMI270) + RFID (M7E Hecto) + UWB (DWM3001CDK) fused through a deep neural network into real-time gesture classification across 15 gestures.
 
-## Setup
+```
+                  ┌──────────────┐
+   Left Hand      │ ESP32+BMI270 │──accel/gyro──┐
+   (back)         └──────────────┘              │
+                                                │  ┌──────────────┐    ┌──────────┐
+                  ┌──────────────┐              ├──►│  IMU Encoder │───►│          │
+   Thumb          │  RFID Tag    │──RSSI/phase──┤  │  (Conv+Trans) │    │  Fusion  │
+   (tag)          └──────────────┘              │  └──────────────┘    │   MLP    │──► 15 gestures
+                                                │                      │          │
+   Between        ┌──────────────┐              │  ┌──────────────┐    │          │
+   Hands          │ DWM3001CDK×2 │──distance────┤  │  UWB Encoder │───►│          │
+   (UWB)          └──────────────┘              │  │  (Conv1D)    │    └──────────┘
+                                                │  └──────────────┘
+                  ┌──────────────┐              │
+   RFID Reader    │  M7E Hecto   │──reads───────┘
+   (table)        └──────────────┘
+```
 
-### 1. Python environment
+## Gestures (15 classes)
+
+| # | Gesture | Description |
+|---|---------|-------------|
+| 0 | pull | Pull motion toward body |
+| 1 | push | Push motion away from body |
+| 2 | clockwise | Circular clockwise motion |
+| 3 | anti_clockwise | Circular counter-clockwise motion |
+| 4 | left | Motion to the left |
+| 5 | right | Motion to the right |
+| 6 | bye_bye | Waving goodbye |
+| 7 | one_arm_boxing | Single-arm boxing punch |
+| 8 | clapping | Clapping hands together |
+| 9 | two_arm_boxing | Two-arm alternating boxing |
+| 10 | t_arms | Arms forming a T |
+| 11 | raise_arms | Raising both arms |
+| 12 | soli | Google Soli-like micro-gestures |
+| 13 | open_close_fist | Opening and closing fist |
+| 14 | palm_up_down | Palm rotation up and down |
+
+## Architecture
+
+```
+null_gesture/
+├── config.py              # All tunables in one place
+├── __main__.py             # CLI: debug | collect | train | predict
+├── sensors/
+│   ├── imu_sensor.py       # TCP client for ESP32 (6-axis: ax,ay,az,gx,gy,gz)
+│   ├── rfid_sensor.py      # M7E Hecto wrapper (RSSI + phase, auto-port-detect)
+│   └── uwb_sensor.py       # DWM3001CDK FiRa TWR wrapper (refactored py3.11)
+├── data/
+│   ├── collector.py        # Guided multi-modal data collection
+│   ├── preprocessor.py     # Per-channel z-score normalization
+│   └── dataset.py          # PyTorch Dataset with augmentation
+├── models/
+│   ├── imu_encoder.py      # Conv1D residual blocks + Transformer (128d output)
+│   ├── rfid_encoder.py     # Conv1D blocks (64d output)
+│   ├── uwb_encoder.py      # Conv1D blocks (64d output)
+│   ├── fusion.py           # Late fusion → MLP head → 15-class softmax
+│   └── trainer.py          # AMP training, early stopping, cosine annealing
+├── gui/
+│   └── main_window.py      # PyQt6 dark-themed real-time prediction GUI
+└── utils/
+    └── logging.py
+```
+
+**Model**: 678K parameters. Mixed-precision (AMP) training. AdamW + cosine annealing.
+
+## Quick Start
+
+### 1. Install dependencies
 
 ```bash
 python3 -m venv venv
-source venv/bin/activate       # Linux/macOS
-# or: venv\Scripts\activate     # Windows
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
----
+### 2. RFID setup (optional)
 
-### 2. RFID Reader (M7E Hecto): Platform Guides
-
-The project uses a SparkFun Simultaneous RFID Reader - M7E Hecto. The Python driver
-requires ThingMagic's Mercury API C library (free download, registration required).
-
-**Download the library first (all platforms):**
-
-1. Go to https://novanta.com/precision-medicine/product/thingmagic-mercury-api/
-2. Click "ThingMagic Mercury API BILBO" under Software (free registration required)
-3. Save the zip file (e.g. `mercuryapi-BILBO-1.37.x.xx.zip`)
-
-Then follow your platform below.
-
----
-
-#### Linux
-
-**Option A - Pre-built wheel (fastest, same platform only):**
+The M7E Hecto reader requires a C library. Install via the bundled script:
 
 ```bash
-pip install mercuryapi_src/dist/python_mercuryapi-*.whl
-```
-
-**Option B - Build from source:**
-
-```bash
-# Prerequisites
-sudo apt-get install unzip patch xsltproc gcc libreadline-dev python3-dev
-
-# Install using the downloaded zip
 bash install_mercury.sh /path/to/mercuryapi-BILBO-1.37.x.xx.zip
+# Or use the pre-built wheel:
+pip install wheels/python_mercuryapi-*.whl
 ```
 
----
+### 3. UWB setup (optional)
 
-#### macOS
+Clone the UWB tools library into the project root:
 
 ```bash
-# Prerequisites
-xcode-select --install        # Install Xcode Command Line Tools
-
-# Clone the repo and build
-git clone https://github.com/lefty01/python-mercuryapi.git mercuryapi_src
-cd mercuryapi_src
-
-# Copy the OS X patch (overwrites the Linux patch)
-cp mercuryapi_osx.patch mercuryapi.patch
-
-# Place the Mercury API zip in this directory
-# (the one you downloaded from Novanta/Jadak)
-# e.g. mercuryapi-BILBO-1.37.x.xx.zip
-
-# Build
-make
-
-# Install
-python3 setup.py build install
-cd ..
+git clone https://github.com/wshanmu/UWB_lab.git /tmp/UWB_lab
+cp -r /tmp/UWB_lab/uwb-qorvo-tools .
+pip install pyserial colorama toml
 ```
 
----
+### 4. Start the IMU data stream
 
-#### Windows
-
-**Option A - Pre-built installer (easiest):**
-
-1. Download the latest Windows installer from:
-   https://github.com/gotthardp/python-mercuryapi/releases
-2. Run the `.exe` installer for your Python version
-
-**Option B - Build from source (advanced):**
-
-1. Download the Mercury API zip (see above)
-2. Download [pthreads-win32](https://sourceforge.net/projects/pthreads4w/files/pthreads-w32-2-9-1-release.zip/download)
-3. Follow the detailed build instructions in `mercuryapi_src/README.md` under "Build Instructions → Windows"
-4. Requires Visual Studio 2017+ with C++ tools and Python extensions
-
----
-
-#### Verify the installation (all platforms):
+Upload the ESP32 firmware that streams IMU data over serial, then:
 
 ```bash
-python -c "import mercury; print(mercury.Reader)"
-# Should output: <class 'mercury.Reader'>
+python esp32_reader.py  # Starts TCP server on port 9999
 ```
 
----
+## Usage
 
-### 3. ESP32 IMU Reader
-
-Reads IMU data from the ESP32 over serial and broadcasts it via TCP.
+### Debug — test individual sensors
 
 ```bash
-python esp32_reader.py
+# Test IMU connection (displays raw accel/gyro values)
+python -m null_gesture debug imu --host 127.0.0.1
+
+# Test RFID reader (displays RSSI and phase per tag)
+python -m null_gesture debug rfid --port /dev/ttyUSB0
+
+# Test UWB ranging (displays inter-hand distance in cm)
+python -m null_gesture debug uwb --controller /dev/ttyACM0 --controlee /dev/ttyACM1
 ```
 
----
-
-### 4. RFID Tag Scanner
+### Collect training data
 
 ```bash
-# Test connection (detects reader, prints info, trial scan)
-./rfid_data_reader.py --test
+# All sensors (15 gestures, 25 samples each, 5s per gesture)
+python -m null_gesture collect --dataset my_data \
+    --imu-host 127.0.0.1 --rfid-port /dev/ttyUSB0 \
+    --uwb-controller /dev/ttyACM0 --uwb-controlee /dev/ttyACM1
 
-# Continuous scan with CSV logging
-./rfid_data_reader.py
+# Single sensor only
+python -m null_gesture collect --dataset imu_only --sensors imu --imu-host 127.0.0.1
+python -m null_gesture collect --dataset rfid_only --sensors rfid --rfid-port /dev/ttyUSB0
+python -m null_gesture collect --dataset uwb_only --sensors uwb \
+    --uwb-controller /dev/ttyACM0 --uwb-controlee /dev/ttyACM1
+
+# Specific gestures only
+python -m null_gesture collect --dataset quick_test --gestures pull,push,clapping \
+    --samples 50 --duration 3.0
 ```
 
-### 5. Troubleshooting
+### Train
 
-**Reader not found / timeout on first run:**
+```bash
+python -m null_gesture train --data data/my_data/data.npz --model-name my_model
 
-If the reader was previously used by the Universal Reader Assistant (URA),
-it may be stuck in streaming mode. Unplug and replug the USB-C cable,
-or run the script again (it will auto-detect and stop streaming).
+# With custom hyperparams
+python -m null_gesture train --data data/my_data/data.npz \
+    --model-name my_model --epochs 300 --batch-size 64 --lr 5e-4
+```
 
-**USB power:**
+The model and preprocessor are saved to `models/my_model/`.
 
-The M7E draws up to 700mA. If using a laptop USB port, you may need a
-powered USB hub or external 5V supply for reliable operation.
+### Predict
 
-**UART switch:**
+```bash
+# GUI mode (all sensors)
+python -m null_gesture predict --model models/my_model/best_model.pt \
+    --imu-host 127.0.0.1 --rfid-port /dev/ttyUSB0 \
+    --uwb-controller /dev/ttyACM0 --uwb-controlee /dev/ttyACM1
 
-The board has a switch labeled "UART". Make sure it's in the **USB** position
-(when using USB-C), not **SER**.
+# Terminal mode (no GUI)
+python -m null_gesture predict --model models/my_model/best_model.pt \
+    --imu-host 127.0.0.1 --no-gui
+
+# IMU-only prediction (RFID and UWB zero-padded)
+python -m null_gesture predict --model models/my_model/best_model.pt \
+    --imu-host 127.0.0.1 --modalities imu
+
+# RFID-only prediction
+python -m null_gesture predict --model models/my_model/best_model.pt \
+    --rfid-port /dev/ttyUSB0 --modalities rfid --no-gui
+
+# Force CPU
+python -m null_gesture predict --model models/my_model/best_model.pt \
+    --imu-host 127.0.0.1 --cpu --no-gui
+```
+
+## Hardware Setup
+
+### ESP32 + BMI270 (IMU)
+- Placed on the back of the left hand
+- Streams 6-axis data (3 accel + 3 gyro) at 50 Hz over serial
+- `esp32_reader.py` bridges serial → TCP on port 9999
+
+### M7E Hecto (RFID)
+- RFID tag around the thumb
+- Detects thumb-to-fingers contact via RSSI drop and phase shift
+- UART switch must be in **USB** position (not SER)
+
+### DWM3001CDK (UWB)
+- One board on each wrist/forearm
+- Measures inter-hand distance via FiRa two-way ranging at 50 Hz
+- Controller (initiator) + Controlee (responder) setup
+
+## Requirements
+
+| Component | Dependency |
+|-----------|-----------|
+| IMU only | `numpy`, `pyserial` |
+| RFID only | `numpy`, `pyserial`, `python-mercuryapi` (C lib) |
+| UWB only | `numpy`, `pyserial`, `colorama`, `toml`, `uwb-qorvo-tools/` |
+| Models | `torch>=2.0` |
+| GUI | `PyQt6`, `pyqtgraph` |
+| Training | `scikit-learn`, `joblib` |
+
+## Legacy Files
+
+The original v1 scripts are preserved as reference:
+
+- `rfid_data_reader.py` — original M7E data reader
+- `rfid_touch_detector.py` — original touch detection (RSSI heuristics + NN)
+- `rfid_train_touch.py` — original training pipeline
+- `esp32_reader.py` — original ESP32 serial→TCP bridge (still used by the new IMU sensor)
+- `IMU_Network.py` — original Keras IMU model (Conv1D, 15 classes)
+- `RFID_Network.py` — original Keras RFID model (Conv1D, binary)
+
+## License
+
+See [LICENSE](LICENSE).
