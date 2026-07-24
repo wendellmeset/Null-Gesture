@@ -201,30 +201,45 @@ class LiveDetectWindow:
         self._current_conf = conf
         self._history.append((label, conf))
 
-        # Update display
-        names = {"standing_still": "Standing Still", "pull": "Pulling", "push": "Pushing"}
-        colors_map = {"standing_still": "#58a6ff", "pull": "#3fb950", "push": "#f85149"}
+        # Update display — all 11 gestures
+        names = {
+            "standing_still": "Standing Still", "pull": "Pulling", "push": "Pushing",
+            "left": "Left", "right": "Right",
+            "clockwise": "Clockwise", "anti_clockwise": "Anti-Clockwise",
+            "raise_arms": "Raise Arms", "bye_bye": "Bye-Bye",
+            "one_arm_boxing": "One-Arm Boxing", "palm_up_down": "Palm Up/Down",
+        }
+        colors_map = {
+            "standing_still": "#58a6ff", "pull": "#3fb950", "push": "#f85149",
+            "left": "#d2991d", "right": "#d2991d",
+            "clockwise": "#a371f7", "anti_clockwise": "#a371f7",
+            "raise_arms": "#79c0ff", "bye_bye": "#ff7b72",
+            "one_arm_boxing": "#f0883e", "palm_up_down": "#56d364",
+        }
 
-        display = names.get(label, label.title())
+        display = names.get(label, label.replace("_", " ").title())
         color = colors_map.get(label, "#e6edf3")
 
         self.pred_label.setText(display)
-        self.pred_label.setStyleSheet(f"color: {color}; font-size: 48px; font-weight: bold;")
+        self.pred_label.setStyleSheet(f"color: {color}; font-size: 44px; font-weight: bold;")
         self.conf_label.setText(f"Confidence: {conf:.0%}")
 
-        # Accel magnitude for context
+        # Status line
         recent = window[-20:, :3]
         mag = float(np.mean(np.linalg.norm(recent, axis=1)))
-        self.sub_label.setText(f"Accel magnitude: {mag:.3f}g  |  Threshold: {self.detector.movement_threshold:.2f}g  |  Samples: {self.detector._sample_count}")
+        self.sub_label.setText(
+            f"Accel: {mag:.3f}g | Thresh: {self.detector.motion_threshold:.2f}g | "
+            f"Samples: {self.detector._sample_count}"
+        )
 
-        # Update history plot
+        # Update history plot — color-coded by gesture
         self.hist_plot.clear()
         if len(self._history) > 1:
             xs = list(range(len(self._history)))
-            ys = [1 if h[0] == "push" else (0 if h[0] == "pull" else 0.5) for h in self._history]
-            colors_hist = [colors_map[h[0]] for h in self._history]
-            # Draw as colored scatter
-            self.hist_plot.plot(xs, ys, pen=None, symbol='o', symbolSize=3, symbolBrush=colors_hist)
+            y_map = {g: i for i, g in enumerate(self.detector.GESTURES)}
+            ys = [y_map.get(h[0], 0) for h in self._history]
+            c_hist = [colors_map.get(h[0], "#555") for h in self._history]
+            self.hist_plot.plot(xs, ys, pen=None, symbol='o', symbolSize=3, symbolBrush=c_hist)
 
     def show(self):
         self.win.show()
