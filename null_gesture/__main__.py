@@ -475,6 +475,23 @@ def _run_terminal(
     return 0
 
 
+def cmd_live(args: argparse.Namespace) -> int:
+    """Interactive real-time training with live feedback GUI."""
+    import sys as _sys
+
+    from null_gesture.gui.live_train import LiveTrainWindow
+
+    gestures = [g.strip() for g in args.gestures.split(",") if g.strip()]
+    if len(gestures) < 2:
+        print("Need at least 2 gestures (e.g. --gestures pull,push)")
+        return 1
+
+    app = __import__("PyQt6.QtWidgets", fromlist=["QApplication"]).QApplication(_sys.argv)
+    win = LiveTrainWindow(gestures, imu_host=args.imu_host, window_seconds=args.window)
+    win.show()
+    return app.exec()
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CLI
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -533,6 +550,13 @@ def parse_args() -> argparse.Namespace:
     )
     pp.add_argument("--no-gui", action="store_true", help="Run in terminal mode")
     pp.add_argument("--cpu", action="store_true", help="Force CPU inference")
+    # ── live ─────────────────────────────────────────────────────────
+    lp = sub.add_parser("live", help="Interactive real-time training with live feedback")
+    lp.add_argument("--imu-host", default="127.0.0.1", help="ESP32 TCP host")
+    lp.add_argument("--gestures", default="pull,push",
+                    help="Comma-separated gestures to train (default: pull,push)")
+    lp.add_argument("--window", type=float, default=2.0,
+                    help="Window length in seconds (default: 2.0)")
 
     return parser.parse_args()
 
@@ -548,6 +572,8 @@ def main() -> int:
         return cmd_train(args)
     elif args.command == "predict":
         return cmd_predict(args)
+    elif args.command == "live":
+        return cmd_live(args)
     else:
         print("Please specify a command: debug, collect, train, or predict")
         print("Run with --help for details.")

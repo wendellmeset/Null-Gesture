@@ -60,6 +60,13 @@ class IMUClient:
             self._socket = None
         logger.info("IMU disconnected (%d samples received)", self._sample_count)
 
+    def reconnect(self) -> bool:
+        """Attempt to reconnect. Returns True on success."""
+        self.disconnect()
+        self._rbuf.clear()
+        time.sleep(0.5)
+        return self.connect()
+
     def read_sample(self) -> dict | None:
         """Read one JSON line from the socket. Returns parsed dict or None."""
         if not self._socket or not self._connected:
@@ -96,6 +103,12 @@ class IMUClient:
         for _ in range(max_samples):
             data = self.read_sample()
             if data is None:
+                if not self._connected:
+                    # Try auto-reconnect once
+                    logger.info("IMU disconnected, attempting reconnect...")
+                    if self.reconnect():
+                        logger.info("IMU reconnected")
+                        continue
                 break
             if data.get("type") != "sample":
                 continue
@@ -106,7 +119,6 @@ class IMUClient:
             self._buffer.append((ts, arr))
             self._sample_count += 1
             added += 1
-        # Prune old samples outside window
         self._prune()
         return added
 
