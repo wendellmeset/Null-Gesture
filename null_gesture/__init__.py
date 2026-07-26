@@ -1,8 +1,2 @@
-"""
-Null-Gesture: Multi-modal gesture detection without a camera.
-
-Sensors: ESP32 IMU (hand), RFID (thumb contact), UWB (inter-hand distance).
-Models:  Deep multi-modal neural network fusion for 15 gesture classes.
-"""
-
+"""Null-Gesture: IMU-based gesture detection on ESP32+BMI270."""
 __version__ = "2.0.0"
