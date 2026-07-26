@@ -159,7 +159,7 @@ class LiveDetectWindow:
 
     def _on_threshold(self, value: int):
         self.thresh_label.setText(f"{value} dps")
-        self.detector.gyro_threshold = float(value)
+        self.detector.gyro_onset = float(value)
 
     def _tick(self):
         if not self.imu_connected:
@@ -186,12 +186,16 @@ class LiveDetectWindow:
         names = {
             "standing_still": "Standing Still", "push": "Pushing", "pull": "Pulling",
             "left": "Left", "right": "Right",
+            "up": "Up", "down": "Down",
             "clockwise": "Clockwise", "anti_clockwise": "Anti-Clockwise",
+            "bye_bye": "Bye-Bye", "palm_up": "Palm Up", "palm_down": "Palm Down",
         }
         colors_map = {
             "standing_still": "#58a6ff", "push": "#f85149", "pull": "#3fb950",
             "left": "#d2991d", "right": "#d2991d",
+            "up": "#79c0ff", "down": "#79c0ff",
             "clockwise": "#a371f7", "anti_clockwise": "#a371f7",
+            "bye_bye": "#ff7b72", "palm_up": "#56d364", "palm_down": "#56d364",
         }
 
         display = names.get(label, label.replace("_", " ").title())
@@ -202,7 +206,7 @@ class LiveDetectWindow:
 
         gyro_mag = float(np.linalg.norm(window[-5:, 3:]))
         self.sub_label.setText(
-            f"Gyro: {gyro_mag:.0f} dps | Thr: {self.detector.gyro_threshold:.0f} dps | "
+            f"Gyro: {gyro_mag:.0f} dps | Thr: {self.detector.gyro_onset:.0f} dps | "
             f"Samples: {self.detector._sample_count}"
         )
 

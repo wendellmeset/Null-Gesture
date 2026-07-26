@@ -57,7 +57,6 @@ def serial_worker(port, baud, samples, stop_event, print_unparsed):
 
                 line_count += 1
 
-                # Always send raw line to clients
                 samples.put(("raw", line))
 
                 # Also parse and send structured sample if it matches
@@ -246,7 +245,7 @@ def main(serial_port, baud_rate, tcp_host='0.0.0.0', tcp_port=9999, print_unpars
 if __name__ == "__main__":
     # Example: change these to match your setup
     main(
-        serial_port='/dev/ttyACM2',
+        serial_port='/dev/ttyACM0',
         baud_rate=115200,
         tcp_host='0.0.0.0',           # listen on all interfaces
         tcp_port=9999,

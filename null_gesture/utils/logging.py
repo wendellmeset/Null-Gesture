@@ -6,9 +6,11 @@ import logging
 import sys
 from pathlib import Path
 
-from null_gesture.config import LOGS_DIR
+from null_gesture.config import PROJECT_ROOT
 
-LOG_FILE: Path = LOGS_DIR / "null_gesture.log"
+LOG_DIR: Path = PROJECT_ROOT / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+LOG_FILE: Path = LOG_DIR / "null_gesture.log"
 
 
 def setup_logging(*, verbose: bool = False) -> logging.Logger:
