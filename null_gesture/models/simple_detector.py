@@ -12,7 +12,7 @@ Detectable gestures:
 from __future__ import annotations
 
 import time
-from collections import Counter, deque
+from collections import deque
 from typing import ClassVar
 
 import numpy as np
@@ -49,7 +49,9 @@ class SimpleIMUDetector:
         self._gyro_buf: deque[tuple[float, float, float]] = deque(maxlen=30)
         self._accel_buf: deque[tuple[float, float, float]] = deque(maxlen=30)
 
-        # State
+        # Motion onset tracking
+        self._onset_dir: tuple[float, float, float] | None = None
+        self._onset_time: float = 0.0
         self._last_label: str = "standing_still"
         self._last_confidence: float = 0.0
         self._last_motion_time: float = 0.0
@@ -102,28 +104,38 @@ class SimpleIMUDetector:
             and accel_var < self.accel_still
         )
 
+        # ── Motion onset detection ────────────────────────────────────
+        # Track the initial gyro direction at motion onset
+        if gyro_mag > self.gyro_onset and self._last_label == "standing_still":
+            # Capture onset direction: the gyro vector at the first moment of motion
+            gx, gy, gz = float(mean_gyro[0]), float(mean_gyro[1]), float(mean_gyro[2])
+            self._onset_dir = (gx, gy, gz)
+            self._onset_time = now
+
         # ── Gesture classification ────────────────────────────────────
         raw_label = "standing_still"
         raw_conf = 0.0
+        az = float(mean_accel[2])
 
         if gyro_mag > self.gyro_onset:
-            # Motion detected by gyro
             self._last_motion_time = now
-            gx, gy, gz = mean_gyro
-            abs_g, abs_gy, abs_gz = abs(gx), abs(gy), abs(gz)
-            dominant = np.argmax([abs_g, abs_gy, abs_gz])
-            secondary = sorted([abs_g, abs_gy, abs_gz])[1]
+            gx, gy, gz = float(mean_gyro[0]), float(mean_gyro[1]), float(mean_gyro[2])
+            abs_gx, abs_gy, abs_gz = abs(gx), abs(gy), abs(gz)
+            secondary = sorted([abs_gx, abs_gy, abs_gz])[1]
 
-            # Clockwise/anti-clockwise = multi-axis gyro
+            # Use initial onset dir if available (first frame of motion)
+            onset = getattr(self, '_onset_dir', None)
+            if onset is not None and (now - getattr(self, '_onset_time', 0)) < 0.15:
+                ogx, ogy, ogz = onset
+            else:
+                ogx, ogy, ogz = gx, gy, gz
+
             is_circular = secondary > self.gyro_onset * 0.7
 
-            # Wave/bye_bye = oscillating gz
+            # Bye-bye: oscillating gz
             recent_gz = [h[2] for h in self._gyro_buf]
             if len(recent_gz) >= 8:
-                crossings = sum(
-                    1 for i in range(1, len(recent_gz))
-                    if recent_gz[i] * recent_gz[i-1] < 0
-                )
+                crossings = sum(1 for i in range(1, len(recent_gz)) if recent_gz[i] * recent_gz[i-1] < 0)
                 if crossings >= 4:
                     raw_label = "bye_bye"
                     raw_conf = min(1.0, crossings / 8.0)
@@ -131,41 +143,36 @@ class SimpleIMUDetector:
 
             if raw_label == "standing_still":
                 if is_circular:
-                    # Multi-axis = rotation
                     avg_gz = sum(h[2] for h in list(self._gyro_buf)[-6:]) / 6
                     raw_label = "clockwise" if avg_gz < -10 else "anti_clockwise"
                     raw_conf = min(1.0, gyro_mag / 120.0)
 
-                elif dominant == 0:  # gx dominant — roll
-                    raw_label = "left" if gx > 8 else "right"
-                    raw_conf = min(1.0, abs_g / 50.0)
+                # Directional gestures — use onset gyro sign as primary
+                elif abs(ogx) >= abs(ogy) and abs(ogx) >= abs(ogz):
+                    # X-axis dominant: roll = left/right
+                    raw_label = "left" if ogx > 0 else "right"
+                    raw_conf = min(1.0, abs(ogx) / 60.0)
 
-                elif dominant == 1:  # gy dominant — pitch
-                    raw_label = "push" if gy > 8 else "pull"
-                    raw_conf = min(1.0, abs_gy / 50.0)
+                elif abs(ogy) >= abs(ogx) and abs(ogy) >= abs(ogz):
+                    # Y-axis dominant: pitch = push/pull
+                    raw_label = "push" if ogy > 0 else "pull"
+                    raw_conf = min(1.0, abs(ogy) / 60.0)
 
-                elif dominant == 2:  # gz dominant — yaw
-                    raw_label = "clockwise" if gz < -10 else "anti_clockwise"
-                    raw_conf = min(1.0, abs_gz / 80.0)
+                elif abs(ogz) >= abs(ogx) and abs(ogz) >= abs(ogy):
+                    raw_label = "clockwise" if ogz < -10 else "anti_clockwise"
+                    raw_conf = min(1.0, abs(ogz) / 80.0)
 
-        elif self._check_vertical_motion(mean_accel):
+        elif abs(az - 1.0) > self.accel_vertical and gyro_mag < self.gyro_still:
+            # Vertical motion detected via accel (no gyro)
             self._last_motion_time = now
-            # Vertical motion — accel based
-            float(mean_accel[2])
             recent_az = [h[2] for h in list(self._accel_buf)[-10:]]
             avg_az = sum(recent_az) / len(recent_az)
-
             if avg_az > 1.0 + self.accel_vertical * 0.5:
                 raw_label = "up"
                 raw_conf = min(1.0, (avg_az - 1.0) / 0.3)
-            elif avg_az < 1.0 - self.accel_vertical:
-                # Check if this is palm_up (sustained low az)
-                if self._check_palm_rotation():
-                    raw_label = "palm_up" if mean_gyro[0] > 5 else "palm_down"
-                    raw_conf = min(1.0, abs(float(mean_gyro[0])) / 40.0)
-                else:
-                    raw_label = "down"
-                    raw_conf = min(1.0, (1.0 - avg_az) / 0.3)
+            else:
+                raw_label = "down"
+                raw_conf = min(1.0, (1.0 - avg_az) / 0.3)
 
         elif is_still and (now - self._last_motion_time) > self.history_s:
             raw_label = "standing_still"
@@ -174,6 +181,7 @@ class SimpleIMUDetector:
         # ── Hysteresis voting ────────────────────────────────────────
         self._vote_buf.append(raw_label)
         if len(self._vote_buf) >= 10:
+            from collections import Counter
             counts = Counter(self._vote_buf)
             top_label, top_count = counts.most_common(1)[0]
             if top_count >= self._vote_needed:
