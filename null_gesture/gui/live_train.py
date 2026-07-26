@@ -27,6 +27,7 @@ class LiveDetectWindow:
     def __init__(self, imu_host: str = "127.0.0.1"):
         self.QtCore, self.QtGui, self.QtWidgets, self.pg = _try_qt_imports()
         self.imu_host = imu_host
+        self.serial_port = None
 
         from null_gesture.sensors.imu_sensor import IMUClient
         self.imu = IMUClient()
@@ -138,8 +139,6 @@ class LiveDetectWindow:
         self._timer.timeout.connect(self._tick)
         self._timer.start(self.WINDOW_MS)
 
-    # ── Actions ──────────────────────────────────────────────────────────
-
     def _connect_imu(self):
         if self.imu_connected:
             self.imu.disconnect()
@@ -149,7 +148,12 @@ class LiveDetectWindow:
             return
         self.sub_label.setText("Connecting...")
         self.QtWidgets.QApplication.processEvents()
-        if self.imu.connect():
+        ok = False
+        if self.serial_port:
+            ok = self.imu.connect_serial(self.serial_port)
+        if not ok and self.imu_host:
+            ok = self.imu.connect_tcp(self.imu_host)
+        if ok:
             self.imu_connected = True
             self.connect_btn.setText("⚡ Disconnect")
             self.sub_label.setText("Connected — move your hand!")

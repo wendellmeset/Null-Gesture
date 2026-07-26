@@ -20,25 +20,31 @@ logger = logging.getLogger("null_gesture")
 
 
 def cmd_debug_imu(args: argparse.Namespace) -> int:
-    from null_gesture.sensors.imu_sensor import IMU_CHANNELS, IMUClient
+    from null_gesture.sensors.imu_sensor import IMUClient
     imu = IMUClient()
-    print(f"Connecting to IMU at {args.host}:{args.port}...")
-    if not imu.connect():
-        print("❌ Failed. Is esp32_reader.py running on port {args.port}?")
+    ok = False
+    if args.serial:
+        print(f"Connecting to {args.serial}...")
+        ok = imu.connect_serial(args.serial)
+    if not ok:
+        print(f"Connecting via TCP {args.host}:{args.port}...")
+        ok = imu.connect_tcp(args.host, args.port)
+    if not ok:
+        print("❌ Failed to connect")
         return 1
-    print("✅ Connected. Streaming 6-axis IMU data. Press Ctrl+C to stop.\n")
+    print("✅ Connected. Press Ctrl+C to stop.\n")
     try:
         while True:
-            imu.ingest(max_samples=20)
+            imu.ingest(max_samples=200)
             window = imu.get_window()
             if window.sum() != 0:
                 latest = window[-1]
-                vals = "  ".join(f"{IMU_CHANNELS[i]}: {latest[i]:+7.3f}" for i in range(6))
-                sys.stdout.write(f"\r  {vals}  (samples: {imu.sample_count})  ")
+                a = latest[:3]; g = latest[3:]
+                sys.stdout.write(f"\r  a={a[0]:+.3f} {a[1]:+.3f} {a[2]:+.3f}  g={g[0]:+.1f} {g[1]:+.1f} {g[2]:+.1f}  ({imu.sample_count})  ")
                 sys.stdout.flush()
-            time.sleep(0.05)
+            time.sleep(0.01)
     except KeyboardInterrupt:
-        print("\n\nStopped.")
+        print("\nStopped.")
     finally:
         imu.disconnect()
     return 0
@@ -48,8 +54,47 @@ def cmd_live(args: argparse.Namespace) -> int:
     from null_gesture.gui.live_train import LiveDetectWindow
     app = __import__("PyQt6.QtWidgets", fromlist=["QApplication"]).QApplication(sys.argv)
     win = LiveDetectWindow(imu_host=args.imu_host)
+    if args.serial:
+        win.serial_port = args.serial
     win.show()
     return app.exec()
+
+
+def calibrate(args: argparse.Namespace) -> int:
+    """Stream raw IMU for calibration: user does each motion while I watch."""
+    from null_gesture.sensors.imu_sensor import IMUClient
+    imu = IMUClient()
+    ok = False
+    if args.serial:
+        ok = imu.connect_serial(args.serial)
+    if not ok:
+        ok = imu.connect_tcp(args.host, args.port)
+    if not ok:
+        print("Connect failed"); return 1
+
+    gestures = args.gestures.split(",")
+    if not gestures or gestures == [""]:
+        gestures = ["push", "pull", "left", "right", "up", "down", "clockwise", "anti_clockwise", "bye_bye", "palm_up"]
+
+    for g in gestures:
+        input(f"\nPress ENTER then do: {g.upper()}")
+        print(f"RECORDING {g}...", flush=True)
+        time.sleep(0.3)
+        imu._rbuf.clear()
+        imu._buffer.clear()
+        start = time.time()
+        while time.time() - start < 2.0:
+            imu.ingest(200)
+            w = imu.get_window()
+            if w.sum() != 0:
+                a = w[-1, :3]; gr = w[-1, 3:]
+                sys.stdout.write(f"\r  a={a[0]:+.2f} {a[1]:+.2f} {a[2]:+.2f}  g={gr[0]:+.0f} {gr[1]:+.0f} {gr[2]:+.0f}  ")
+                sys.stdout.flush()
+            time.sleep(0.005)
+        print(f"\n  Done. {imu.sample_count} samples")
+
+    imu.disconnect()
+    return 0
 
 
 def parse_args() -> argparse.Namespace:
@@ -61,12 +106,21 @@ def parse_args() -> argparse.Namespace:
 
     # debug imu
     dp = sub.add_parser("debug", help="Test IMU connection")
-    dp.add_argument("--host", default="127.0.0.1", help="ESP32 TCP host")
-    dp.add_argument("--port", default="9999", help="ESP32 TCP port")
+    dp.add_argument("--host", default="127.0.0.1")
+    dp.add_argument("--port", default="9999")
+    dp.add_argument("--serial", help="Serial port (e.g. /dev/ttyACM0)")
 
     # live
     lp = sub.add_parser("live", help="Real-time gesture detection (GUI)")
-    lp.add_argument("--imu-host", default="127.0.0.1", help="ESP32 TCP host")
+    lp.add_argument("--imu-host", default="127.0.0.1")
+    lp.add_argument("--serial", help="Serial port (e.g. /dev/ttyACM0)")
+
+    # calibrate
+    cp = sub.add_parser("calibrate", help="Record gestures for calibration")
+    cp.add_argument("--serial", default="/dev/ttyACM0", help="Serial port")
+    cp.add_argument("--host", default="127.0.0.1")
+    cp.add_argument("--port", default="9999")
+    cp.add_argument("--gestures", help="Comma-separated gestures to record")
 
     return parser.parse_args()
 
@@ -77,10 +131,10 @@ def main() -> int:
         return cmd_debug_imu(args)
     elif args.command == "live":
         return cmd_live(args)
+    elif args.command == "calibrate":
+        return calibrate(args)
     else:
-        print("Commands: debug, live")
-        print("  debug imu   — test IMU connection and stream raw data")
-        print("  live        — real-time gesture detection GUI")
+        print("Commands: debug, live, calibrate")
         return 1
 
 
