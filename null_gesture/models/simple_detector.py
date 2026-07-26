@@ -132,7 +132,7 @@ class SimpleIMUDetector:
 
         # ── Hysteresis voting ────────────────────────────────────────
         self._vote_buf.append(raw_label)
-        if len(self._vote_buf) >= self._vote_buf.maxlen:
+        if len(self._vote_buf) >= 10:
             from collections import Counter
             counts = Counter(self._vote_buf)
             top_label, top_count = counts.most_common(1)[0]
