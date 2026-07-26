@@ -7,7 +7,6 @@ No model, no training — connect and go.
 from __future__ import annotations
 
 import logging
-import time
 from collections import deque
 
 import numpy as np
@@ -15,12 +14,10 @@ import numpy as np
 logger = logging.getLogger("null_gesture.gui.live")
 
 
-def _try_qt_imports():
-    from PyQt6 import QtCore, QtGui, QtWidgets
+def _try_qt_imports() -> tuple:
     import pyqtgraph as pg
-    pg.setConfigOptions(antialias=True, useNumba=False)
+    from PyQt6 import QtCore, QtGui, QtWidgets
     return QtCore, QtGui, QtWidgets, pg
-
 
 class LiveDetectWindow:
     """Real-time IMU gesture display — no training needed."""
@@ -156,7 +153,7 @@ class LiveDetectWindow:
             self.imu_connected = True
             self.connect_btn.setText("⚡ Disconnect")
             self.sub_label.setText("Connected — move your hand!")
-            self.status_lbl.setText(f"Connected")
+            self.status_lbl.setText("Connected")
         else:
             self.sub_label.setText("❌ Connection failed")
 

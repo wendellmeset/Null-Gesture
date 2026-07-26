@@ -20,13 +20,13 @@ logger = logging.getLogger("null_gesture")
 
 
 def cmd_debug_imu(args: argparse.Namespace) -> int:
-    from null_gesture.sensors.imu_sensor import IMUClient, IMU_CHANNELS
+    from null_gesture.sensors.imu_sensor import IMU_CHANNELS, IMUClient
     imu = IMUClient()
     print(f"Connecting to IMU at {args.host}:{args.port}...")
     if not imu.connect():
         print("❌ Failed. Is esp32_reader.py running on port {args.port}?")
         return 1
-    print(f"✅ Connected. Streaming 6-axis IMU data. Press Ctrl+C to stop.\n")
+    print("✅ Connected. Streaming 6-axis IMU data. Press Ctrl+C to stop.\n")
     try:
         while True:
             imu.ingest(max_samples=20)

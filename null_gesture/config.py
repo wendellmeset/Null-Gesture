@@ -1,5 +1,7 @@
 """Central configuration — IMU-only."""
 from __future__ import annotations
+
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
@@ -13,7 +15,6 @@ GESTURES: Final[list[str]] = [
 ]
 NUM_GESTURES: Final = len(GESTURES)
 
-from dataclasses import dataclass, field
 
 @dataclass
 class IMUConfig:
@@ -24,7 +25,7 @@ class IMUConfig:
     channels: int = 6
     timesteps: int = sample_rate_hz * int(window_seconds)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.timesteps = int(self.sample_rate_hz * self.window_seconds)
 
 imu_config = IMUConfig()

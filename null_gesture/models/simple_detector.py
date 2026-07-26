@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from typing import ClassVar
 
 import numpy as np
 
@@ -17,7 +18,7 @@ import numpy as np
 class SimpleIMUDetector:
     """Multi-gesture IMU classifier calibrated on real hardware data."""
 
-    GESTURES = [
+    GESTURES: ClassVar[list[str]] = [
         "standing_still", "push", "pull", "left", "right",
         "clockwise", "anti_clockwise",
     ]
@@ -61,7 +62,7 @@ class SimpleIMUDetector:
         mean_gyro = np.mean(gyro, axis=0)  # (gx, gy, gz)
         gyro_mag = float(np.linalg.norm(mean_gyro))
 
-        mean_accel = np.mean(accel, axis=0)
+        np.mean(accel, axis=0)
         accel_var = float(np.mean(np.var(accel, axis=0)))
 
         # Store gyro direction

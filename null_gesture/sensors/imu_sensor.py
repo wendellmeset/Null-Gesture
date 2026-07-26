@@ -1,18 +1,16 @@
 """IMU sensor: TCP client for ESP32 + BMI270 data stream."""
-
 from __future__ import annotations
 
 import json
 import logging
 import socket
-import struct
 import time
 from collections import deque
-from typing import Callable
 
 import numpy as np
 
-from null_gesture.config import IMUConfig, imu_config as default_imu_config
+from null_gesture.config import IMUConfig
+from null_gesture.config import imu_config as default_imu_config
 
 logger = logging.getLogger("null_gesture.sensors.imu")
 
@@ -43,7 +41,7 @@ class IMUClient:
                 "IMU connected to %s:%d", self.config.tcp_host, self.config.tcp_port
             )
             return True
-        except (OSError, ConnectionRefusedError, socket.timeout) as exc:
+        except (OSError, ConnectionRefusedError, TimeoutError) as exc:
             logger.error("IMU connection failed: %s", exc)
             self._connected = False
             return False
@@ -90,7 +88,7 @@ class IMUClient:
                 return None
             data = json.loads(line.decode("utf-8"))
             return data
-        except (socket.timeout, json.JSONDecodeError, UnicodeDecodeError):
+        except (TimeoutError, json.JSONDecodeError, UnicodeDecodeError):
             return None
         except OSError as exc:
             logger.error("IMU read error: %s", exc)
