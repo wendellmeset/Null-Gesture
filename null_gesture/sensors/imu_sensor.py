@@ -8,11 +8,14 @@ import re
 import socket
 import time
 from collections import deque
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from null_gesture.config import IMUConfig
-from null_gesture.config import imu_config as default_imu_config
+if TYPE_CHECKING:
+    import serial
+
+from null_gesture.config import IMUConfig, imu_config as default_imu_config
 
 logger = logging.getLogger("null_gesture.sensors.imu")
 
@@ -30,11 +33,14 @@ class IMUClient:
     def __init__(self, config: IMUConfig | None = None) -> None:
         self.config = config or default_imu_config
         self._socket: socket.socket | None = None
-        self._serial: object | None = None  # serial.Serial (lazy import)
+        self._serial: serial.Serial | None = None  # type: ignore[name-defined]
+        self._mode: str = "none"
         self._rbuf: bytearray = bytearray()
         self._buffer: deque[tuple[float, np.ndarray]] = deque()
         self._connected = False
         self._sample_count = 0
+
+    # ── Connect ──────────────────────────────────────────────────────
 
     def connect_tcp(self, host: str = "127.0.0.1", port: int = 9999) -> bool:
         try:
@@ -43,34 +49,32 @@ class IMUClient:
             self._mode = "tcp"
             self._connected = True
             self._rbuf.clear()
-            logger.info("IMU TCP connected %s:%d", host, port)
             return True
-        except OSError as exc:
-            logger.error("IMU TCP failed: %s", exc)
+        except OSError:
             return False
 
     def connect_serial(self, port: str = "/dev/ttyACM0", baud: int = 115200) -> bool:
         try:
-            import serial  # type: ignore[import-untyped]
+            import serial as _ser
         except ImportError:
             logger.error("pyserial not installed")
             return False
         try:
-            self._serial = serial.Serial(port, baud, timeout=0.3)
+            self._serial = _ser.Serial(port, baud, timeout=0.3)
             self._serial.dtr = False
             self._serial.rts = False
             self._serial.reset_input_buffer()
             self._mode = "serial"
             self._connected = True
             self._rbuf.clear()
-            logger.info("IMU serial connected %s @ %d", port, baud)
             return True
-        except OSError as exc:
-            logger.error("IMU serial failed: %s", exc)
+        except OSError:
             return False
 
     def connect(self, host: str = "127.0.0.1", port: int = 9999) -> bool:
         return self.connect_tcp(host, port)
+
+    # ── Read ──────────────────────────────────────────────────────────
 
     def read_sample(self) -> dict | None:
         if self._mode == "tcp":
@@ -94,9 +98,8 @@ class IMUClient:
             del self._rbuf[: idx + 1]
             if not line.strip():
                 return None
-            data: dict = json.loads(line.decode("utf-8"))
-            return data
-        except (TimeoutError, json.JSONDecodeError, UnicodeDecodeError):
+            return json.loads(line.decode("utf-8"))  # type: ignore[no-any-return]
+        except (socket.timeout, json.JSONDecodeError, UnicodeDecodeError):
             return None
         except OSError:
             self._connected = False
@@ -106,12 +109,13 @@ class IMUClient:
         if not self._serial or not self._connected:
             return None
         try:
-            while b"\n" not in self._rbuf:
-                n = self._serial.in_waiting or 1
-                chunk = self._serial.read(n)
-                if not chunk:
-                    return None
-                self._rbuf.extend(chunk)
+            # Bulk-read all available bytes (non-blocking)
+            n = self._serial.in_waiting
+            if n > 0:
+                self._rbuf.extend(self._serial.read(n))
+            # If we have a complete line, extract it
+            if b"\n" not in self._rbuf:
+                return None
             idx = self._rbuf.index(b"\n")
             line = bytes(self._rbuf[:idx])
             del self._rbuf[: idx + 1]
@@ -129,6 +133,8 @@ class IMUClient:
             }
         except (OSError, UnicodeDecodeError):
             return None
+
+    # ── Ingest ────────────────────────────────────────────────────────
 
     def ingest(self, max_samples: int = 200) -> int:
         added = 0
@@ -180,7 +186,6 @@ class IMUClient:
             self._serial.close()
             self._serial = None
         self._mode = "none"
-        logger.info("IMU disconnected (%d samples)", self._sample_count)
 
     @property
     def connected(self) -> bool:
