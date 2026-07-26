@@ -72,10 +72,8 @@ def calibrate(args: argparse.Namespace) -> int:
     if not ok:
         print("Connect failed"); return 1
 
-    gestures = args.gestures.split(",")
-    if not gestures or gestures == [""]:
-        gestures = ["push", "pull", "left", "right", "up", "down", "clockwise", "anti_clockwise", "bye_bye", "palm_up"]
-
+    gestures_str = args.gestures or "push,pull,left,right,up,down,clockwise,anti_clockwise,bye_bye,palm_up"
+    gestures = gestures_str.split(",")
     for g in gestures:
         input(f"\nPress ENTER then do: {g.upper()}")
         print(f"RECORDING {g}...", flush=True)
