@@ -1,8 +1,4 @@
-"""Zero-training live IMU gesture display.
-
-Real-time detection of 7 hand/arm gestures using gyro-dominant analysis.
-No model, no training — connect and go.
-"""
+"""Zero-training live IMU gesture display — 7 gestures."""
 
 from __future__ import annotations
 
@@ -19,15 +15,14 @@ def _try_qt_imports() -> tuple:
     from PyQt6 import QtCore, QtGui, QtWidgets
     return QtCore, QtGui, QtWidgets, pg
 
-class LiveDetectWindow:
-    """Real-time IMU gesture display — no training needed."""
 
+class LiveDetectWindow:
     WINDOW_MS = 40
 
     def __init__(self, imu_host: str = "127.0.0.1"):
         self.QtCore, self.QtGui, self.QtWidgets, self.pg = _try_qt_imports()
         self.imu_host = imu_host
-        self.serial_port = None
+        self.serial_port: str | None = None
 
         from null_gesture.sensors.imu_sensor import IMUClient
         self.imu = IMUClient()
@@ -39,21 +34,20 @@ class LiveDetectWindow:
         self._current_label = "standing_still"
         self._current_conf = 0.0
         self._history: deque[tuple[str, float]] = deque(maxlen=200)
+        self._plot_bufs: list[deque[float]] = [deque(maxlen=200) for _ in range(6)]
+        self._curves: list = []
 
         self._init_ui()
         self._init_timers()
 
-    # ── UI ──────────────────────────────────────────────────────────────
-
-    def _init_ui(self):
+    def _init_ui(self) -> None:
         Q = self.QtWidgets
-        self.win = Q.QMainWindow()
-        self.win.setWindowTitle("Null-Gesture — Live IMU Detection")
-        self.win.resize(900, 620)
-
         D, C, B, T = "#0d1117", "#161b22", "#30363d", "#e6edf3"
         A = "#58a6ff"
 
+        self.win = Q.QMainWindow()
+        self.win.setWindowTitle("Null-Gesture — Live IMU Detection")
+        self.win.resize(900, 620)
         self.win.setStyleSheet(f"""
             QMainWindow {{ background-color: {D}; }}
             QWidget {{ color: {T}; font-family: sans-serif; font-size: 12px; }}
@@ -74,7 +68,6 @@ class LiveDetectWindow:
         hdr.setStyleSheet(f"color: {A}; font-size: 20px; font-weight: bold;")
         layout.addWidget(hdr)
 
-        # Big prediction
         card = Q.QWidget()
         card.setStyleSheet(f"background: {C}; border-radius: 10px; padding: 24px;")
         cb = Q.QVBoxLayout(card)
@@ -92,21 +85,17 @@ class LiveDetectWindow:
         cb.addWidget(self.sub_label)
         layout.addWidget(card)
 
-        # IMU plot
         self.plot = self.pg.PlotWidget()
         self.plot.setBackground(C)
         self.plot.showGrid(x=True, y=True, alpha=0.15)
         self.plot.setMaximumHeight(140)
-        self.curves = []
-        self.plot_bufs = [deque(maxlen=200) for _ in range(6)]
         colors = ["#58a6ff", "#3fb950", "#d2991d", "#f85149", "#a371f7", "#79c0ff"]
         for i, ch in enumerate(["ax", "ay", "az", "gx", "gy", "gz"]):
             c = self.plot.plot([], [], pen=self.pg.mkPen(colors[i], width=1.5), name=ch)
-            self.curves.append(c)
+            self._curves.append(c)
         self.plot.addLegend(offset=(1, 1))
         layout.addWidget(self.plot)
 
-        # History plot
         self.hist_plot = self.pg.PlotWidget()
         self.hist_plot.setBackground(C)
         self.hist_plot.showGrid(x=False, y=True, alpha=0.1)
@@ -114,7 +103,6 @@ class LiveDetectWindow:
         self.hist_plot.hideAxis("left")
         layout.addWidget(self.hist_plot)
 
-        # Controls
         btn_row = Q.QHBoxLayout()
         self.connect_btn = Q.QPushButton("🔌 Connect IMU")
         self.connect_btn.clicked.connect(self._connect_imu)
@@ -123,23 +111,23 @@ class LiveDetectWindow:
         self.status_lbl.setStyleSheet("color: #8b949e;")
         btn_row.addWidget(self.status_lbl)
         btn_row.addStretch()
-        btn_row.addWidget(Q.QLabel("Gyro Thr:"))
+        btn_row.addWidget(Q.QLabel("Thr:"))
         self.thresh_slider = Q.QSlider(self.QtCore.Qt.Orientation.Horizontal)
         self.thresh_slider.setRange(5, 60)
-        self.thresh_slider.setValue(18)
+        self.thresh_slider.setValue(12)
         self.thresh_slider.setFixedWidth(100)
         self.thresh_slider.valueChanged.connect(self._on_threshold)
         btn_row.addWidget(self.thresh_slider)
-        self.thresh_label = Q.QLabel("18 dps")
+        self.thresh_label = Q.QLabel("12 dps")
         btn_row.addWidget(self.thresh_label)
         layout.addLayout(btn_row)
 
-    def _init_timers(self):
+    def _init_timers(self) -> None:
         self._timer = self.QtCore.QTimer()
         self._timer.timeout.connect(self._tick)
         self._timer.start(self.WINDOW_MS)
 
-    def _connect_imu(self):
+    def _connect_imu(self) -> None:
         if self.imu_connected:
             self.imu.disconnect()
             self.imu_connected = False
@@ -161,27 +149,24 @@ class LiveDetectWindow:
         else:
             self.sub_label.setText("❌ Connection failed")
 
-    def _on_threshold(self, value: int):
+    def _on_threshold(self, value: int) -> None:
         self.thresh_label.setText(f"{value} dps")
         self.detector.gyro_onset = float(value)
 
-    def _tick(self):
+    def _tick(self) -> None:
         if not self.imu_connected:
             return
-
         self.imu.ingest(max_samples=20)
         window = self.imu.get_window()
         if window.sum() == 0:
             return
-
-        # IMU plot
         for i in range(6):
-            self.plot_bufs[i].append(float(window[-1, i]))
-        for i, buf in enumerate(self.plot_bufs):
+            self._plot_bufs[i].append(float(window[-1, i]))
+        for i, buf in enumerate(self._plot_bufs):
             b = list(buf)
-            if b: self.curves[i].setData(range(len(b)), b)
+            if b:
+                self._curves[i].setData(range(len(b)), b)
 
-        # Detector
         label, conf = self.detector.update(window)
         self._current_label = label
         self._current_conf = conf
@@ -190,16 +175,12 @@ class LiveDetectWindow:
         names = {
             "standing_still": "Standing Still", "push": "Pushing", "pull": "Pulling",
             "left": "Left", "right": "Right",
-            "up": "Up", "down": "Down",
             "clockwise": "Clockwise", "anti_clockwise": "Anti-Clockwise",
-            "bye_bye": "Bye-Bye", "palm_up": "Palm Up", "palm_down": "Palm Down",
         }
         colors_map = {
             "standing_still": "#58a6ff", "push": "#f85149", "pull": "#3fb950",
             "left": "#d2991d", "right": "#d2991d",
-            "up": "#79c0ff", "down": "#79c0ff",
             "clockwise": "#a371f7", "anti_clockwise": "#a371f7",
-            "bye_bye": "#ff7b72", "palm_up": "#56d364", "palm_down": "#56d364",
         }
 
         display = names.get(label, label.replace("_", " ").title())
@@ -209,12 +190,8 @@ class LiveDetectWindow:
         self.conf_label.setText(f"Confidence: {conf:.0%}")
 
         gyro_mag = float(np.linalg.norm(window[-5:, 3:]))
-        self.sub_label.setText(
-            f"Gyro: {gyro_mag:.0f} dps | Thr: {self.detector.gyro_onset:.0f} dps | "
-            f"Samples: {self.detector._sample_count}"
-        )
+        self.sub_label.setText(f"Gyro: {gyro_mag:.0f} dps | Thr: {self.detector.gyro_onset:.0f} dps | {self.detector._sample_count}")
 
-        # History plot
         self.hist_plot.clear()
         if len(self._history) > 1:
             xs = list(range(len(self._history)))
@@ -223,5 +200,5 @@ class LiveDetectWindow:
             c_hist = [colors_map.get(h[0], "#555") for h in self._history]
             self.hist_plot.plot(xs, ys, pen=None, symbol='o', symbolSize=3, symbolBrush=c_hist)
 
-    def show(self):
+    def show(self) -> None:
         self.win.show()
