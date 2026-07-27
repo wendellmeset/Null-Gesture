@@ -365,81 +365,66 @@ class MotionGestureDetector:
         ax_std = float(np.std(ax_seq))
         ax_range = float(np.ptp(ax_seq))
 
-        # ── CW / ACW: constant rotation around Z ─────────────────────
-        # Circle = sustained non-zero gyro_z mean, low ZCR (not oscillating)
+        # ── Bye-Bye: oscillating gyro_z (check FIRST — overrides circle) ──
+        # Wave = high std/mean ratio + detectable ZCR
+        oscillation_ratio = gz_std / max(abs(gz_mean), 0.05)
+        is_oscillation = gz_zcr > 0.02 and oscillation_ratio > 2.0 and gz_std > 1.5
+
+        # ── CW / ACW: constant rotation (only if NOT oscillating) ─────
         circle_magnitude = abs(gz_mean)
-        is_circle_like = circle_magnitude > 0.25 and gz_zcr < 0.15
+        is_circle_like = (not is_oscillation) and circle_magnitude > 0.4 and gz_zcr < 0.12
 
         cw_score = 0.0
         acw_score = 0.0
+        bye_score = 0.0
+        left_score = 0.0
+        right_score = 0.0
 
-        if is_circle_like:
-            # Direction from sign of mean gyro_z. Score proportional to magnitude.
+        if is_oscillation:
+            bye_score = min(1.0, gz_zcr * 4.0 * min(1.0, gz_std / 5.0))
+
+        elif is_circle_like:
             base = min(1.0, circle_magnitude / 1.5)
             if gz_mean > 0:
                 cw_score = base
             else:
                 acw_score = base
-
-            # DTW corroboration: normalize both sequences for shape comparison
+            # DTW corroboration
             gz_norm = _normalize_seq(gz_seq)
             cw_tmpl = _normalize_seq(self._templates.get("clockwise", np.zeros(1)))
             acw_tmpl = _normalize_seq(self._templates.get("anti_clockwise", np.zeros(1)))
-            dtw_cw = _dtw_distance(gz_norm, cw_tmpl)
-            dtw_acw = _dtw_distance(gz_norm, acw_tmpl)
-            # Boost the correct direction, penalize the wrong one
-            if dtw_cw < dtw_acw:
+            if _dtw_distance(gz_norm, cw_tmpl) < _dtw_distance(gz_norm, acw_tmpl):
                 cw_score = min(1.0, cw_score * 1.4)
                 acw_score *= 0.4
             else:
                 acw_score = min(1.0, acw_score * 1.4)
                 cw_score *= 0.4
-        # ── Left / Right: DC-blocked accel_x transient ──────────────
-        # Only detect lateral motion when NOT performing a circle
-        if len(ax_seq) >= 10:
-            ax_sma = np.convolve(ax_seq, np.ones(10)/10, mode='same')
-            ax_hp = ax_seq - ax_sma
+
         else:
-            ax_hp = ax_seq
-
-        ax_hp_range = float(np.ptp(ax_hp))
-        ax_hp_std = float(np.std(ax_hp))
-        ax_hp_max = float(np.max(np.abs(ax_hp)))
-        is_transient = ax_hp_range > 0.15 and ax_hp_range > ax_hp_std * 1.8
-
-        left_score = 0.0
-        right_score = 0.0
-
-        if is_transient and not is_circle_like:
-            # Direction from initial impulse: find first sample exceeding
-            # 1.5× std — its sign indicates movement direction
-            threshold = ax_hp_std * 1.5
-            direction = 0
-            for val in ax_hp:
-                if val > threshold:
-                    direction = 1
-                    break
-                elif val < -threshold:
-                    direction = -1
-                    break
-
-            base = min(1.0, ax_hp_max / 0.8)
-            if direction > 0:
-                left_score = min(1.0, base * 1.3)
-                right_score = base * 0.2
-            elif direction < 0:
-                right_score = min(1.0, base * 1.3)
-                left_score = base * 0.2
-
-        # ── Bye-Bye: oscillating gyro_z ──────────────────────────────
-        # Wave = high std/mean ratio (oscillation, not constant rotation)
-        # and any detectable ZCR (even 1-2 crossings per window is enough)
-        oscillation_ratio = gz_std / max(abs(gz_mean), 0.05)
-        is_oscillation = gz_zcr > 0.02 and oscillation_ratio > 2.0 and gz_std > 1.5
-
-        bye_score = 0.0
-        if is_oscillation:
-            bye_score = min(1.0, gz_zcr * 4.0 * min(1.0, gz_std / 5.0))
+            # ── Left / Right: only when neither oscillation nor circle ──
+            if len(ax_seq) >= 15:
+                ax_sma = np.convolve(ax_seq, np.ones(10)/10, mode='same')
+                ax_hp = ax_seq - ax_sma
+            else:
+                ax_hp = ax_seq
+            ax_hp_range = float(np.ptp(ax_hp))
+            ax_hp_std = float(np.std(ax_hp))
+            ax_hp_max = float(np.max(np.abs(ax_hp)))
+            if ax_hp_range > 0.15 and ax_hp_range > ax_hp_std * 1.8:
+                threshold = ax_hp_std * 1.5
+                # Skip first few samples to avoid SMA edge effects
+                start = max(5, len(ax_hp) // 6)
+                direction = 0
+                for val in ax_hp[start:]:
+                    if val > threshold:
+                        direction = 1; break
+                    elif val < -threshold:
+                        direction = -1; break
+                base = min(1.0, ax_hp_max / 0.8)
+                if direction > 0:
+                    left_score = min(1.0, base * 1.3)
+                elif direction < 0:
+                    right_score = min(1.0, base * 1.3)
 
         # ── Boxing: accel magnitude peaks ─────────────────────────────
         amag_peaks = features.get("amag_peak_count", 0.0)
