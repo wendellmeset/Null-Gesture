@@ -1,11 +1,10 @@
 """Live gesture detection GUI — connects to IMU, shows results."""
-
 from __future__ import annotations
 
 from PyQt6 import QtCore, QtWidgets
 
-from null_gesture.sensors.imu import IMUSensor
 from null_gesture.pipeline.detector import GestureDetector
+from null_gesture.sensors.imu import IMUSensor
 
 
 class LiveWindow(QtWidgets.QWidget):
@@ -137,7 +136,7 @@ class LiveWindow(QtWidgets.QWidget):
         else:
             self._status.setText("Disconnected")
 
-    def closeEvent(self, event):
+    def closeEvent(self, a0):
         if self._imu_ok:
             self._imu.disconnect()
-        super().closeEvent(event)
+        super().closeEvent(a0)

@@ -24,8 +24,8 @@ def cmd_record(args: argparse.Namespace) -> int:
     ]
 
     if args.mmwave:
-        from null_gesture.sensors.mmwave import MMWaveSensor
         from null_gesture.pipeline.acquisition import record_mmwave_gestures
+        from null_gesture.sensors.mmwave import MMWaveSensor
         radar = MMWaveSensor()
         if not radar.connect(args.mmwave):
             print(f"❌ mmWave connection failed on {args.mmwave}")
@@ -34,8 +34,8 @@ def cmd_record(args: argparse.Namespace) -> int:
         radar.disconnect()
         return 0
 
-    from null_gesture.sensors.imu import IMUSensor
     from null_gesture.pipeline.acquisition import record_gestures
+    from null_gesture.sensors.imu import IMUSensor
     imu = IMUSensor()
     ok = False
     if args.serial:
@@ -82,6 +82,7 @@ def cmd_train(args: argparse.Namespace) -> int:
 
 def cmd_live(args: argparse.Namespace) -> int:
     from PyQt6.QtWidgets import QApplication
+
     from null_gesture.gui.live import LiveWindow
 
     app = QApplication(sys.argv)
@@ -92,6 +93,7 @@ def cmd_live(args: argparse.Namespace) -> int:
 
 def cmd_mmlive(args: argparse.Namespace) -> int:
     from PyQt6.QtWidgets import QApplication
+
     from null_gesture.gui.mmwave_live import MMWaveLiveWindow
 
     app = QApplication(sys.argv)

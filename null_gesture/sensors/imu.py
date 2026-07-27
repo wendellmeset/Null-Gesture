@@ -95,7 +95,7 @@ class IMUSensor:
             if data.get("type") != "sample":
                 return None
             return np.array([data.get(ch, 0.0) for ch in IMU_CHANNELS], dtype=np.float32)
-        except (socket.timeout, json.JSONDecodeError, UnicodeDecodeError, OSError):
+        except (TimeoutError, json.JSONDecodeError, UnicodeDecodeError, OSError):
             return None
 
     def _read_serial(self) -> np.ndarray | None:

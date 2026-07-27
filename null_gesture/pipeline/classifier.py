@@ -86,7 +86,7 @@ class GestureClassifier:
         Returns:
             (gesture_label, confidence_0_to_1).
         """
-        if self._features_pca is None or self._pca_components is None:
+        if self._features_pca is None or self._pca_components is None or self._labels is None:
             return "unknown", 0.0
 
         # Standardise + project
@@ -121,6 +121,10 @@ class GestureClassifier:
         """Save fitted model to .npz file."""
         if self._features_pca is None:
             raise RuntimeError("Classifier not fitted — call fit() first")
+        assert self._labels is not None
+        assert self._pca_mean is not None
+        assert self._pca_std is not None
+        assert self._pca_components is not None
         np.savez(
             path,
             labels=self._labels,
@@ -145,6 +149,8 @@ class GestureClassifier:
         self._features_pca = data["features_pca"]
         self.k = int(data["k"])
         self.n_components = int(data["n_components"])
+        assert self._labels is not None
+        assert self._pca_components is not None
         logger.info(
             "Classifier loaded: %d samples, %d features → %d PCA components",
             len(self._labels), self._pca_components.shape[1], self.n_components,

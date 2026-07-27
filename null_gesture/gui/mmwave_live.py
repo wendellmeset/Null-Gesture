@@ -1,11 +1,10 @@
 """Live mmWave gesture detection GUI."""
-
 from __future__ import annotations
 
 from PyQt6 import QtCore, QtWidgets
 
-from null_gesture.sensors.mmwave import MMWaveSensor
 from null_gesture.pipeline.detector import MMWaveDetector
+from null_gesture.sensors.mmwave import MMWaveSensor
 
 
 class MMWaveLiveWindow(QtWidgets.QWidget):
@@ -121,7 +120,7 @@ class MMWaveLiveWindow(QtWidgets.QWidget):
             if self._radar_ok else "Disconnected"
         )
 
-    def closeEvent(self, event):
+    def closeEvent(self, a0):
         if self._radar_ok:
             self._radar.disconnect()
-        super().closeEvent(event)
+        super().closeEvent(a0)

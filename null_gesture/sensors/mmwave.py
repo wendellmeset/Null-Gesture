@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import struct
-import time
 from collections import deque
 
 import numpy as np
@@ -44,7 +43,8 @@ class MMWaveSensor:
 
     # ── Connect ──────────────────────────────────────────────────
 
-    def connect(self, port: str = "/dev/ttyACM0", baud: int = 921600) -> bool:
+    def connect(self, port: str = "/dev/ttyACM0", baud: int = 921600,
+                config_file: str | None = None) -> bool:
         """Connect to mmWave radar over serial.
 
         The WRL6432 typically enumerates as two serial ports:
@@ -62,6 +62,11 @@ class MMWaveSensor:
             self._serial.reset_input_buffer()
             self._rbuf.clear()
             self._connected = True
+
+            # Send config file if provided
+            if config_file:
+                self._send_config(config_file)
+
             logger.info("mmWave connected on %s @ %d", port, baud)
             return True
         except OSError as e:
@@ -103,7 +108,7 @@ class MMWaveSensor:
         # Parse header
         header = self._rbuf[8:40]
         try:
-            version, total_len, platform, frame_num, time_cpu = struct.unpack(
+            _version, total_len, _platform, frame_num, _time_cpu = struct.unpack(
                 "<IIIII", header[:20]
             )
         except struct.error:
@@ -252,6 +257,44 @@ class MMWaveSensor:
         if self._serial:
             self._serial.close()
             self._serial = None
+
+    # ── Configuration ────────────────────────────────────────────
+
+    def _send_config(self, path: str) -> None:
+        """Send a .cfg file to the radar over the data port.
+
+        The IWRL6432 typically needs configuration before it starts
+        outputting point cloud data. The config file contains CLI commands
+        like 'channelCfg', 'profileCfg', 'frameCfg', etc.
+        """
+        import time as _time
+        logger.info("Sending config: %s", path)
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith(("%", "#")):
+                    continue
+                cmd = line + "\r\n"
+                if self._serial is not None:
+                    self._serial.write(cmd.encode())
+                    _time.sleep(0.05)
+                    # Read echo
+                    self._serial.read(self._serial.in_waiting)
+        logger.info("Config sent")
+
+    def dump_raw(self, count: int = 200) -> bytes:
+        """Read and return raw bytes for debugging."""
+        if not self._connected or self._serial is None:
+            return b""
+        _time = __import__("time")
+        data = bytearray()
+        t0 = _time.time()
+        while len(data) < count and _time.time() - t0 < 3:
+            n = self._serial.in_waiting
+            if n:
+                data.extend(self._serial.read(n))
+            _time.sleep(0.01)
+        return bytes(data)
 
     @property
     def connected(self) -> bool:
