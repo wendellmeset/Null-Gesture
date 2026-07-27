@@ -8,3 +8,7 @@ logs/
 *.swp
 *.swo
 *~
+
+# Trained models
+data/raw/*.npy
+null_gesture/models/saved/*.pt
