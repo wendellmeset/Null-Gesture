@@ -1,5 +1,78 @@
 # Null-Gesture Startup Guide
+# IMPORTANT
+Prerequisites
+- Python 3.11+
+- ESP32 Core 2 with BMI270 IMU (flashed with streaming firmware)
+- 2x Qorvo DWM3001CDK UWB boards (optional)
+- Linux/macOS (tested on Arch)
+Step 1: Environment Setup
+cd Null-Gesture
+python3 -m venv venv
+source venv/bin/activate        # Linux/macOS
+pip install -r requirements.txt
+Verify:
+python -c "import torch; print(torch.__version__)"
+python -c "from null_gesture import __version__; print(__version__)"
+Step 2: IMU Data Bridge (Required)
+The ESP32 streams IMU data over serial. esp32_reader.py bridges it to TCP on port 9999.
+1. Edit esp32_reader.py — set serial_port to your ESP32's port (line 249):
+serial_port='/dev/ttyACM2',  # or /dev/ttyUSB0, check with: ls /dev/ttyACM*
+2. Run it in a separate terminal:
+python esp32_reader.py
+# Output: Data streaming server listening on 0.0.0.0:9999
+3. Test the IMU connection:
+python -m null_gesture debug imu --host 127.0.0.1
+# Should show changing ax/ay/az/gx/gy/gz values
+Step 3: UWB Setup (Optional)
+1. Clone the UWB tools:
+git clone https://github.com/wshanmu/UWB_lab.git /tmp/UWB_lab
+cp -r /tmp/UWB_lab/uwb-qorvo-tools .
+pip install pyserial colorama toml
+2. Connect both DWM3001CDK boards via USB. Find their ports:
+ls /dev/ttyACM*
+# Typically /dev/ttyACM0 and /dev/ttyACM1
+3. Test each board:
+export PYTHONPATH="$(pwd)/uwb-qorvo-tools/lib/uwb-uci:$(pwd)/uwb-qorvo-tools/lib/uqt-utils:$(pwd)/uwb-qorvo-tools:$PYTHONPATH"
+python uwb-qorvo-tools/scripts/device/get_device_info/get_device_info.py -p /dev/ttyACM0
+Step 4: Record Training Data
+# All 15 gestures, 25 samples each (~20 min)
+python -m null_gesture collect --dataset my_data \
+    --imu-host 127.0.0.1 \
+    --uwb-controller /dev/ttyACM0 \
+    --uwb-controlee /dev/ttyACM1
 
+# Quick test: 3 gestures, 10 samples each
+python -m null_gesture collect --dataset quick_test \
+    --gestures pull,push,clapping \
+    --samples 10 --duration 3.0
+
+# IMU only (no UWB hardware)
+python -m null_gesture collect --dataset imu_only --sensors imu
+The collector will:
+1. Connect to sensors
+2. For each gesture, countdown 3s → record 3s → rest 1s → repeat
+3. Save to data/<name>/data.npz + metadata.json
+Step 5: Live Detection GUI
+python -m null_gesture live --imu-host 127.0.0.1
+Opens a PyQt6 window showing real-time IMU waveforms and gyro-based gesture detection (no model needed — rule-based).
+What Each Command Does
+Command	Purpose	Requires
+debug imu	Stream raw IMU values	ESP32 + esp32_reader.py
+live	Real-time gesture GUI	ESP32 + esp32_reader.py
+collect	Record labeled training data	ESP32 + optionally UWB boards
+File Layout After Recording
+data/
+  my_data/
+    data.npz          # arrays: imu (N,100,6), uwb (N,100,1), labels (N,)
+    metadata.json     # gesture list, sensor config, sample counts
+Training & Prediction (Not Yet Implemented)
+The training pipeline (train command) and prediction pipeline (predict command) are not yet built. When ready, they'll use:
+- data/preprocessor.py — normalize with ZScoreNormalizer
+- data/dataset.py — load with GestureDataset, augment, split train/val
+- models/ — encoder + fusion architecture (678K params target)
+
+
+# DONE
 Step-by-step guide from zero to real-time gesture prediction.
 
 ## Prerequisites

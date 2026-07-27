@@ -52,9 +52,33 @@ def cmd_live(args: argparse.Namespace) -> int:
     return app.exec()
 
 
+def cmd_collect(args: argparse.Namespace) -> int:
+    from null_gesture.config import GESTURES
+    from null_gesture.data.collector import MultiModalCollector
+
+    gestures = args.gestures.split(",") if args.gestures else None
+    sensors = args.sensors.split(",") if args.sensors else ["imu", "uwb"]
+
+    collector = MultiModalCollector(
+        dataset_name=args.dataset,
+        gestures=gestures,
+        samples_per_gesture=args.samples,
+        duration=args.duration,
+        imu_host=args.imu_host,
+        uwb_controller=args.uwb_controller,
+        uwb_controlee=args.uwb_controlee,
+        sensor_filter=sensors,
+    )
+
+    total = collector.run()
+    if total > 0:
+        collector.save()
+    return 0
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Null-Gesture: IMU-based gesture detection.",
+        description="Null-Gesture: multi-modal gesture detection.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command", help="Commands")
@@ -68,6 +92,17 @@ def parse_args() -> argparse.Namespace:
     lp = sub.add_parser("live", help="Real-time gesture detection (GUI)")
     lp.add_argument("--imu-host", default="127.0.0.1", help="ESP32 TCP host")
 
+    # collect
+    cp = sub.add_parser("collect", help="Record IMU+UWB gesture data")
+    cp.add_argument("--dataset", required=True, help="Dataset name (saved under data/<name>/)")
+    cp.add_argument("--gestures", default=None, help="Comma-separated gesture names (default: all 15)")
+    cp.add_argument("--samples", type=int, default=25, help="Samples per gesture (default: 25)")
+    cp.add_argument("--duration", type=float, default=3.0, help="Seconds per sample (default: 3.0)")
+    cp.add_argument("--sensors", default=None, help="Comma-separated sensor list: imu,uwb (default: both)")
+    cp.add_argument("--imu-host", default="127.0.0.1", help="ESP32 TCP host for IMU")
+    cp.add_argument("--uwb-controller", default=None, help="UWB controller serial port")
+    cp.add_argument("--uwb-controlee", default=None, help="UWB controlee serial port")
+
     return parser.parse_args()
 
 
@@ -77,10 +112,13 @@ def main() -> int:
         return cmd_debug_imu(args)
     elif args.command == "live":
         return cmd_live(args)
+    elif args.command == "collect":
+        return cmd_collect(args)
     else:
-        print("Commands: debug, live")
-        print("  debug imu   — test IMU connection and stream raw data")
-        print("  live        — real-time gesture detection GUI")
+        print("Commands: debug, live, collect")
+        print("  debug imu       — test IMU connection and stream raw data")
+        print("  live            — real-time gesture detection GUI")
+        print("  collect         — record IMU+UWB gesture data for training")
         return 1
 
 
