@@ -20,15 +20,15 @@ Usage::
 from __future__ import annotations
 
 import glob
+import importlib.util
+import logging
 import time
-from pathlib import Path
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
-try:
-    import serial.tools.list_ports
-    _has_serial_tools = True
-except ImportError:
-    _has_serial_tools = False
+_log = logging.getLogger(__name__)
+
+_has_serial_tools = importlib.util.find_spec("serial.tools.list_ports") is not None
 
 KNOWN_VID_PID = {
     (0x10C4, 0xEA60),  # Silicon Labs CP210x
@@ -59,7 +59,7 @@ class RFIDReader:
     def connect(self) -> bool:
         """Connect to the reader. Auto-detects port if not specified."""
         try:
-            import mercury  # noqa: F811
+            import mercury
         except ImportError:
             raise ImportError(
                 "python-mercuryapi not installed.\n"
@@ -71,11 +71,11 @@ class RFIDReader:
             return False
 
         try:
-            self._reader = mercury.Reader(f"tmr://{port}", baudrate=self._baud)
+            self._reader = mercury.Reader(f"tmr://{port}", baudrate=self._baud)  # type: ignore[attr-defined]
         except TypeError as exc:
             if "Streaming" in str(exc):
                 _stop_streaming(port)
-                self._reader = mercury.Reader(f"tmr://{port}", baudrate=self._baud)
+                self._reader = mercury.Reader(f"tmr://{port}", baudrate=self._baud)  # type: ignore[attr-defined]
             else:
                 raise
 
@@ -89,8 +89,8 @@ class RFIDReader:
         if self._reader:
             try:
                 self._reader.stop_reading()
-            except Exception:
-                pass
+            except (OSError, AttributeError):
+                _log.warning("Failed to stop reader", exc_info=True)
             self._reader = None
         self._connected = False
 
@@ -105,7 +105,8 @@ class RFIDReader:
             return None
         try:
             tags = self._reader.read(timeout=500)
-        except Exception:
+        except (OSError, AttributeError):
+            _log.warning("Failed to read tags", exc_info=True)
             return None
         if not tags:
             return None
@@ -144,8 +145,8 @@ class RFIDReader:
         finally:
             try:
                 self._reader.stop_reading()
-            except Exception:
-                pass
+            except (OSError, AttributeError):
+                _log.warning("Failed to stop reader in stream cleanup", exc_info=True)
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
         return self.stream()
@@ -174,8 +175,8 @@ def _stop_streaming(port: str) -> None:
         ser.flush()
         time.sleep(2)
         ser.close()
-    except Exception:
-        pass
+    except OSError:
+        _log.warning("Failed to stop streaming on %s", port, exc_info=True)
 
 
 def _find_m7e_port(baud: int = 115200) -> str | None:
@@ -185,7 +186,8 @@ def _find_m7e_port(baud: int = 115200) -> str | None:
     candidates: list[str] = []
 
     if _has_serial_tools:
-        for info in serial.tools.list_ports.comports():
+        import serial.tools.list_ports as _list_ports
+        for info in _list_ports.comports():
             if info.device and (info.vid, info.pid) in KNOWN_VID_PID:
                 candidates.append(info.device)
 
@@ -195,7 +197,7 @@ def _find_m7e_port(baud: int = 115200) -> str | None:
 
     for port in candidates:
         try:
-            reader = mercury.Reader(f"tmr://{port}", baudrate=baud)
+            reader = mercury.Reader(f"tmr://{port}", baudrate=baud)  # type: ignore[attr-defined]
             reader.get_model()
             reader.stop_reading()
             return port
@@ -203,12 +205,14 @@ def _find_m7e_port(baud: int = 115200) -> str | None:
             if "Streaming" in str(exc):
                 _stop_streaming(port)
                 try:
-                    reader = mercury.Reader(f"tmr://{port}", baudrate=baud)
+                    reader = mercury.Reader(f"tmr://{port}", baudrate=baud)  # type: ignore[attr-defined]
                     reader.get_model()
                     reader.stop_reading()
                     return port
-                except Exception:
+                except (OSError, AttributeError):
+                    _log.debug("Retry for port %s failed", port)
                     continue
-        except Exception:
+        except (OSError, AttributeError):
+            _log.debug("Port %s not available", port)
             continue
     return None

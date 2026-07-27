@@ -22,9 +22,9 @@ All readers support iteration::
         print(f"{len(points)} points detected")
 """
 
+from Readers.imu import IMUReader
+from Readers.mmwave import MMWaveReader
 from Readers.rfid import RFIDReader
 from Readers.uwb import UWBReader
-from Readers.mmwave import MMWaveReader
-from Readers.imu import IMUReader
 
-__all__ = ["RFIDReader", "UWBReader", "MMWaveReader", "IMUReader"]
+__all__ = ["IMUReader", "MMWaveReader", "RFIDReader", "UWBReader"]

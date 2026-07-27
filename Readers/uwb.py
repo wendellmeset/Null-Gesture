@@ -26,10 +26,12 @@ Dual-board mode (Initiator + Responder)::
 from __future__ import annotations
 
 import json
+import logging
 import re
-import threading
 import time
-from typing import Iterator
+from collections.abc import Iterator
+
+_log = logging.getLogger(__name__)
 
 _JSON_RE = re.compile(r"\[\s*\{.*?\}\s*\]", re.DOTALL)
 _BAUD = 115200
@@ -129,8 +131,8 @@ class UWBReader:
             if s:
                 try:
                     s.close()
-                except Exception:
-                    pass
+                except OSError:
+                    _log.warning("Failed to close serial port", exc_info=True)
         self._ser = self._ser_initiator = self._ser_responder = None
 
     # ── Reading ──────────────────────────────────────────────────────────
@@ -168,8 +170,8 @@ class UWBReader:
                             }
                             self._last_sample = sample
                             return sample
-        except Exception:
-            pass
+        except OSError:
+            _log.warning("Serial read error", exc_info=True)
         return None
 
     def stream(self) -> Iterator[dict]:

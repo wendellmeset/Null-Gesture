@@ -21,6 +21,7 @@ Windows notes:
 
 from __future__ import annotations
 
+import argparse
 import os
 import platform
 import shutil
@@ -29,7 +30,6 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Optional
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 _HERE = Path(__file__).resolve().parent
@@ -57,14 +57,18 @@ def _install_wheel() -> bool:
     if not _WHEEL.exists():
         return False
     if not _wheel_compatible():
-        print(f"  Wheel is for Python 3.11 Linux x86_64, but you have "
-              f"Python {sys.version_info.major}.{sys.version_info.minor} "
-              f"on {platform.machine()}. Skipping wheel.")
+        _python = f"Python {sys.version_info.major}.{sys.version_info.minor}"
+        msg = (
+            "  Wheel is for Python 3.11 Linux x86_64, but you have "
+            f"{_python} on {platform.machine()}. Skipping wheel."
+        )
+        print(msg)
         return False
-    print("  → Installing pre-built wheel (Python 3.11 / Linux x86_64) …")
-    subprocess.check_call(
+    print("  → Installing pre-built wheel (Python 3.11 / Linux x86_64) \u2026")
+    subprocess.run(
         [sys.executable, "-m", "pip", "install", str(_WHEEL)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        check=True,
     )
     return True
 
@@ -76,13 +80,15 @@ def _install_wheel() -> bool:
 def _find_zip(search_dir: Path | None = None) -> Path | None:
     """Look for a mercuryapi-*.zip file."""
     candidates: list[Path] = []
-    dirs: list[Path] = [search_dir] if search_dir else []
+    dirs: list[Path] = []
+    if search_dir is not None:
+        dirs.append(search_dir)
     dirs.append(_HERE)           # Readers/mercury/  (bundled zip)
     dirs.append(_HERE.parent)    # Readers/
     dirs.append(Path.cwd())
 
     for d in dirs:
-        if d is None or not d.exists():
+        if not d.exists():
             continue
         for pat in ("mercuryapi-*.zip", "mercuryapi*.zip", "*Mercury*API*.zip"):
             candidates.extend(d.glob(pat))
@@ -90,7 +96,7 @@ def _find_zip(search_dir: Path | None = None) -> Path | None:
     return candidates[0] if candidates else None
 
 
-def _find_cmake_windows() -> Optional[str]:
+def _find_cmake_windows() -> str | None:
     """Find cmake on Windows."""
     for name in ("cmake", "cmake.exe"):
         p = shutil.which(name)
@@ -122,60 +128,65 @@ def _build_windows(api_dir: Path) -> None:
     build_dir = api_dir / "build"
     build_dir.mkdir(exist_ok=True)
 
-    subprocess.check_call(
+    subprocess.run(
         [cmake, str(src_dir), "-DCMAKE_BUILD_TYPE=Release"],
         cwd=str(build_dir),
+        check=True,
     )
-    subprocess.check_call(
+    subprocess.run(
         [cmake, "--build", ".", "--config", "Release"],
         cwd=str(build_dir),
+        check=True,
     )
 
     # Now build the Python extension
     env = os.environ.copy()
     env["MERCURYAPI_DIR"] = str(api_dir)
-    subprocess.check_call(
+    subprocess.run(
         [sys.executable, "setup-win.py", "build_ext", "--inplace"],
         cwd=str(api_dir.parent) if api_dir.parent.name == "python-mercuryapi"
         else str(api_dir),
         env=env,
+        check=True,
     )
 
 
 def _build_windows_setuppy(api_dir: Path) -> None:
     """Fallback: use setup-win.py directly."""
-    import shutil
     repo_dir = api_dir.parent  # python-mercuryapi checkout
 
     # setup-win.py expects a specific mercuryapi version layout
-    subprocess.check_call(
+    subprocess.run(
         [sys.executable, "setup-win.py", "build_ext", "--inplace"],
         cwd=str(repo_dir),
+        check=True,
     )
 
 
 def _build_unix(repo_dir: Path) -> None:
     """Build on Linux / macOS using the Makefile."""
-    subprocess.check_call(["make"], cwd=str(repo_dir))
-    subprocess.check_call(
+    subprocess.run(["make"], cwd=str(repo_dir), check=True)
+    subprocess.run(
         [sys.executable, "setup.py", "install"],
         cwd=str(repo_dir),
+        check=True,
     )
 
 
 def _build_source(zip_path: Path) -> bool:
     """Clone python-mercuryapi, unpack zip, build, install."""
-    print(f"  → Using Mercury API zip: {zip_path.name}")
+    print(f"  \u2192 Using Mercury API zip: {zip_path.name}")
 
     with tempfile.TemporaryDirectory(prefix="mercury_build_") as tmp:
         tmp_dir = Path(tmp)
         repo_dir = tmp_dir / "python-mercuryapi"
 
         # 1. Clone
-        print("  → Cloning python-mercuryapi …")
-        subprocess.check_call(
+        print("  \u2192 Cloning python-mercuryapi \u2026")
+        subprocess.run(
             ["git", "clone", "--depth", "1", _REPO_URL, str(repo_dir)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            check=True,
         )
 
         # 2. Copy zip into repo dir
@@ -195,7 +206,7 @@ def _build_source(zip_path: Path) -> bool:
             makefile.write_text(text)
 
         # 4. Build
-        print("  → Building C library + Python extension …")
+        print("  \u2192 Building C library + Python extension \u2026")
         if sys.platform == "win32":
             # Unpack and build
             with zipfile.ZipFile(dest_zip) as zf:
@@ -203,9 +214,10 @@ def _build_source(zip_path: Path) -> bool:
             api_dir = next(repo_dir.glob("mercuryapi-*"))
             _build_windows(api_dir)
             # Install
-            subprocess.check_call(
+            subprocess.run(
                 [sys.executable, "setup-win.py", "install"],
                 cwd=str(repo_dir),
+                check=True,
             )
         else:
             _build_unix(repo_dir)
@@ -218,29 +230,57 @@ def _build_source(zip_path: Path) -> bool:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _print_manual() -> None:
-    print("""
-╔══════════════════════════════════════════════════════════════════════════╗
-║  Mercury API zip not found.                                            ║
-╠══════════════════════════════════════════════════════════════════════════╣
-║                                                                        ║
-║  The Mercury API is proprietary software from Novanta / Jadak.         ║
-║  You need to download it manually (free registration required):        ║
-║                                                                        ║
-║    https://novanta.com/precision-medicine/product/thingmagic-mercury-api/
-║                                                                        ║
-║  Or search for "ThingMagic Mercury API BILBO download".                ║
-║                                                                        ║
-║  After downloading the zip, run:                                       ║
-║                                                                        ║
-║    python Readers/mercury/install.py --zip mercuryapi-BILBO-XXX.zip    ║
-║                                                                        ║
-║  Or place the zip in the project root and run the installer.           ║
-║                                                                        ║
-║  Linux users: if you have Python 3.11, the pre-built wheel works       ║
-║  without downloading the zip — just run the installer.                 ║
-║                                                                        ║
-╚══════════════════════════════════════════════════════════════════════════╝
-""")
+    warnings = (
+        "\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
+        "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
+        "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
+        "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
+        "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557\n"
+        "\u2551  Mercury API zip not found.                                            "
+        "  \u2551\n"
+        "\u2560\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
+        "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
+        "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
+        "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
+        "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557\n"
+        "\u2551  The Mercury API is proprietary software from Novanta / Jadak.         "
+        "  \u2551\n"
+        "\u2551  You need to download it manually (free registration required):        "
+        "  \u2551\n"
+        "\u2551                                                                        "
+        "  \u2551\n"
+        "\u2551    https://novanta.com/precision-medicine/product/thingmagic-mercury-api/  \u2551\n"
+        "\u2551                                                                        "
+        "  \u2551\n"
+        "\u2551  Or search for \u201cThingMagic Mercury API BILBO download\u201d.              "
+        "  \u2551\n"
+        "\u2551                                                                        "
+        "  \u2551\n"
+        "\u2551  After downloading the zip, run:                                       "
+        "  \u2551\n"
+        "\u2551                                                                        "
+        "  \u2551\n"
+        "\u2551    python Readers/mercury/install.py --zip mercuryapi-BILBO-XXX.zip    "
+        "  \u2551\n"
+        "\u2551                                                                        "
+        "  \u2551\n"
+        "\u2551  Or place the zip in the project root and run the installer.           "
+        "  \u2551\n"
+        "\u2551                                                                        "
+        "  \u2551\n"
+        "\u2551  Linux users: if you have Python 3.11, the pre-built wheel works       "
+        "  \u2551\n"
+        "\u2551  without downloading the zip \u2014 just run the installer.                   "
+        "  \u2551\n"
+        "\u2551                                                                        "
+        "  \u2551\n"
+        "\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
+        "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
+        "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
+        "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
+        "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d"
+    )
+    print(warnings)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -248,14 +288,13 @@ def _print_manual() -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def main() -> None:
-    import argparse
     p = argparse.ArgumentParser(
         description="Install python-mercuryapi for the M7E RFID reader.")
     p.add_argument("--zip", dest="zip_path", metavar="PATH",
                    help="Path to mercuryapi-BILBO-*.zip")
     args = p.parse_args()
 
-    print("Installing python-mercuryapi …")
+    print("Installing python-mercuryapi \u2026")
     print(f"  Platform: {sys.platform} / {platform.machine()}")
     print(f"  Python:   {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
 
@@ -265,19 +304,19 @@ def main() -> None:
         return
 
     # 2. Find or accept zip
-    zip_path = Path(args.zip_path) if args.zip_path else _find_zip()
-    if zip_path is None:
+    zip_path_ = Path(args.zip_path) if args.zip_path else _find_zip()
+    if zip_path_ is None:
         _print_manual()
         sys.exit(1)
 
-    if not zip_path.exists():
-        print(f"  Zip not found: {zip_path}")
+    if not zip_path_.exists():
+        print(f"  Zip not found: {zip_path_}")
         _print_manual()
         sys.exit(1)
 
     # 3. Build from source
     try:
-        _build_source(zip_path.resolve())
+        _build_source(zip_path_.resolve())
         print("  Build complete.")
         _verify()
     except subprocess.CalledProcessError as e:
@@ -299,11 +338,11 @@ def main() -> None:
 def _verify() -> None:
     """Try importing mercury to confirm it works."""
     try:
-        import mercury  # noqa: F401
-        print("  ✅ Verified: `import mercury` succeeded.")
+        import mercury as _mercury  # type: ignore[import-untyped]
+        del _mercury
+        print("  \u2705 Verified: `import mercury` succeeded.")
     except ImportError:
-        print("  ⚠️  Install ran but `import mercury` failed. "
-              "Check the output above.")
+        print("  \u26a0\ufe0f  Install ran but `import mercury` failed. Check the output above.")
 
 
 if __name__ == "__main__":

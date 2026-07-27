@@ -21,8 +21,9 @@ from __future__ import annotations
 import struct
 import time
 from collections import deque
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
+from typing import Any
 
 import numpy as np
 
@@ -41,7 +42,7 @@ class MMWaveReader:
     def __init__(self, port: str = "/dev/ttyACM0", baud: int = 115200):
         self._port = port
         self._baud = baud
-        self._serial = None
+        self._serial: Any = None
         self._connected = False
         self._buffer: deque[np.ndarray] = deque(maxlen=200)
         self._points = np.zeros((0, 3), dtype=np.float32)

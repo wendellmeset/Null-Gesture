@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Iterator
+from collections.abc import Iterator
 
 # Regex for lines like: accel[g] x= 0.123 y=-0.456 z= 1.001 | gyro[dps] x= 1.2 y=-0.3 z= 0.0
 _FLOAT = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
