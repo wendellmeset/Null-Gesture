@@ -60,15 +60,18 @@ def _default_templates() -> dict[str, np.ndarray]:
     t = np.linspace(0, 2 * math.pi, 50)
 
     return {
-        "clockwise": _normalize_seq(np.sin(t)),  # positive gyro_z oscillation
+        "clockwise": _normalize_seq(np.sin(t)),
         "anti_clockwise": _normalize_seq(-np.sin(t)),
+        # For right-wrist mount with X toward fingers:
+        # moving hand LEFT  → wrist flexes → +X accel (positive hump)
+        # moving hand RIGHT → wrist extends → -X accel (negative hump)
         "left": _normalize_seq(np.concatenate([
-            np.linspace(0, 2, 20),  # accel impulse positive
+            np.linspace(0, 2, 20),
             np.linspace(2, 0, 20),
             np.zeros(10),
         ])),
         "right": _normalize_seq(np.concatenate([
-            np.linspace(0, -2, 20),  # accel impulse negative
+            np.linspace(0, -2, 20),
             np.linspace(-2, 0, 20),
             np.zeros(10),
         ])),
@@ -391,13 +394,11 @@ class MotionGestureDetector:
             else:
                 acw_score = min(1.0, acw_score * 1.4)
                 cw_score *= 0.4
-
         # ── Left / Right: DC-blocked accel_x transient ──────────────
-        # Gravity-removed accel may still have DC offset — remove it
-        # with a simple high-pass: subtract 10-sample moving average
+        # Only detect lateral motion when NOT performing a circle
         if len(ax_seq) >= 10:
             ax_sma = np.convolve(ax_seq, np.ones(10)/10, mode='same')
-            ax_hp = ax_seq - ax_sma  # high-pass (DC-blocked) signal
+            ax_hp = ax_seq - ax_sma
         else:
             ax_hp = ax_seq
 
@@ -409,37 +410,36 @@ class MotionGestureDetector:
         left_score = 0.0
         right_score = 0.0
 
-        if is_transient:
-            # Direction from the dominant sign of the DC-blocked signal
-            ax_hp_mean = float(np.mean(ax_hp))
-            if ax_hp_mean > 0.03:
-                left_score = min(1.0, ax_hp_max / 1.0)
-            elif ax_hp_mean < -0.03:
-                right_score = min(1.0, ax_hp_max / 1.0)
+        if is_transient and not is_circle_like:
+            # Direction from initial impulse: find first sample exceeding
+            # 1.5× std — its sign indicates movement direction
+            threshold = ax_hp_std * 1.5
+            direction = 0
+            for val in ax_hp:
+                if val > threshold:
+                    direction = 1
+                    break
+                elif val < -threshold:
+                    direction = -1
+                    break
 
-            # DTW corroboration on DC-blocked signal
-            ax_norm = _normalize_seq(ax_hp)
-            left_tmpl = _normalize_seq(self._templates.get("left", np.zeros(1)))
-            right_tmpl = _normalize_seq(self._templates.get("right", np.zeros(1)))
-            dtw_left = _dtw_distance(ax_norm, left_tmpl)
-            dtw_right = _dtw_distance(ax_norm, right_tmpl)
-            if dtw_left < dtw_right and left_score > 0:
-                left_score = min(1.0, left_score * 1.4)
-                right_score = 0.0
-            elif dtw_right < dtw_left and right_score > 0:
-                right_score = min(1.0, right_score * 1.4)
-                left_score = 0.0
+            base = min(1.0, ax_hp_max / 0.8)
+            if direction > 0:
+                left_score = min(1.0, base * 1.3)
+                right_score = base * 0.2
+            elif direction < 0:
+                right_score = min(1.0, base * 1.3)
+                left_score = base * 0.2
 
         # ── Bye-Bye: oscillating gyro_z ──────────────────────────────
         # Wave = high std/mean ratio (oscillation, not constant rotation)
-        # and moderate+ ZCR (direction changes)
+        # and any detectable ZCR (even 1-2 crossings per window is enough)
         oscillation_ratio = gz_std / max(abs(gz_mean), 0.05)
-        is_oscillation = gz_zcr > 0.04 and oscillation_ratio > 2.0 and gz_std > 1.5
+        is_oscillation = gz_zcr > 0.02 and oscillation_ratio > 2.0 and gz_std > 1.5
 
         bye_score = 0.0
         if is_oscillation:
-            # Score from ZCR and gyro magnitude
-            bye_score = min(1.0, gz_zcr * 3.0 * min(1.0, gz_std / 5.0))
+            bye_score = min(1.0, gz_zcr * 4.0 * min(1.0, gz_std / 5.0))
 
         # ── Boxing: accel magnitude peaks ─────────────────────────────
         amag_peaks = features.get("amag_peak_count", 0.0)
