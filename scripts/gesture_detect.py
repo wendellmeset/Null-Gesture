@@ -218,7 +218,8 @@ class DetectWindow(QtWidgets.QWidget):
         self._uwb_controlee = uwb_controlee
 
         # Detector
-        self._detector = GestureDetector()
+        from null_gesture.models.calibrated_detector import CalibratedDetector
+        self._detector = CalibratedDetector()
         self._current_label = "standing_still"
         self._current_conf = 1.0
         self._history: deque[tuple[str, float]] = deque(maxlen=100)
@@ -327,7 +328,7 @@ class DetectWindow(QtWidgets.QWidget):
             return
 
         gyro_mag = float(np.linalg.norm(window[-1, 3:]))
-        label, conf = self._detector.update(window, self._uwb_dist)
+        label, conf = self._detector.update(window)
 
         # Always update status
         state = self._detector._state
