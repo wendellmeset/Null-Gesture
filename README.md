@@ -1,90 +1,54 @@
 # Null-Gesture
 
-**IMU-based gesture detection** on ESP32+BMI270. Heuristic fallback + neural network for near-perfect accuracy.
+IMU-based gesture recognition — MATLAB-style pipeline (PCA + k-NN).
 
 ## Setup
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv venv
+source venv/bin/activate        # or: venv/bin/activate.fish
 pip install -r requirements.txt
 ```
 
-## Quick Start (heuristic — works immediately, ~70% accuracy)
+## Usage
 
 ```bash
-# Terminal 1 — start IMU bridge
-python esp32_reader.py
+# 1. Record gestures (IMU required)
+PYTHONPATH=. python -m null_gesture record --serial /dev/ttyACM0
 
-# Terminal 2 — real-time gesture detection GUI
-python -m null_gesture live
+# 2. Train classifier
+PYTHONPATH=. python -m null_gesture train
+
+# 3. Live detection
+PYTHONPATH=. python -m null_gesture live --serial /dev/ttyACM0
 ```
 
-The GUI auto-detects whether a trained model exists. If not, it falls back to the heuristic detector.
-
-## Neural Network Pipeline (→ 99% accuracy)
-
-### 1. Collect training data
+### Quick test (4 gestures)
 
 ```bash
-python -m null_gesture collect --host 127.0.0.1
+PYTHONPATH=. python -m null_gesture record --serial /dev/ttyACM0 --gestures push,pull,left,right --samples 3
+PYTHONPATH=. python -m null_gesture train
+PYTHONPATH=. python -m null_gesture live --serial /dev/ttyACM0
 ```
-
-This records 2 samples of each gesture (push, pull, left, right, up, down, clockwise, anti-clockwise, bye_bye, palm_up, palm_down). Follow the prompts — press ENTER, perform the gesture, repeat.
-
-### 2. Train the model
-
-```bash
-python -m null_gesture train
-```
-
-Generates 200 synthetic variants per real sample, trains a lightweight 1D CNN (~35K params), and saves to `null_gesture/models/saved/gesture_cnn.pt`.
-
-### 3. Run with the neural detector
-
-```bash
-python -m null_gesture live
-```
-
-The GUI now loads your trained model. Green "NN" badge in the status bar confirms it.
 
 ## Architecture
 
 ```
-ESP32 + BMI270  ──serial──>  esp32_reader.py  ──TCP:9999──>  IMUClient
-                                                                    │
-                                                    ┌───────────────┴───────────────┐
-                                                    ▼                               ▼
-                                            SimpleIMUDetector                  NNDetector
-                                            (heuristic, always works)         (GestureCNN, needs training)
-                                                    │                               │
-                                                    └───────────┬───────────────────┘
-                                                                ▼
-                                                          LiveDetectWindow
-                                                            (PyQt6 GUI)
+record  →  data/raw/*.npy     (acquisition.py)
+train   →  model.npz           (features.py → classifier.py)
+live    →  GUI display         (detector.py → live.py)
+              │
+         IMUSensor (imu.py)
 ```
+
+## Pipeline
+
+1. **Acquisition** — record labeled IMU windows (50 Hz, 6-axis)
+2. **Preprocessing** — Butterworth low-pass filter, onset/offset segmentation, resample to 100 samples
+3. **Features** — 49 statistical features (mean, std, RMS, skew, kurtosis, SMA, correlations, spectral)
+4. **Classifier** — PCA dimensionality reduction + k-NN (k=3)
+5. **Detector** — real-time onset/offset segment → extract features → classify
 
 ## Gestures
 
-| # | Gesture | Description |
-|---|---------|-------------|
-| 1 | standing_still | Hand at rest |
-| 2 | push | Push forward |
-| 3 | pull | Pull back |
-| 4 | left | Swipe left |
-| 5 | right | Swipe right |
-| 6 | up | Swipe up |
-| 7 | down | Swipe down |
-| 8 | clockwise | Rotate clockwise |
-| 9 | anti_clockwise | Rotate counter-clockwise |
-| 10 | bye_bye | Wave side-to-side |
-| 11 | palm_up | Rotate palm upward |
-| 12 | palm_down | Rotate palm downward |
-
-## Model details
-
-- **GestureCNN**: 3 Conv1D blocks + global average pool + 2 FC layers
-- **~35,000 parameters** — runs in <1ms on CPU
-- **Temporal smoothing**: exponential moving average on softmax probabilities eliminates flicker
-- **Stillness gate**: gyro magnitude threshold pre-filters standing_still
-- **Augmentation**: Gaussian noise, time warping, magnitude scaling, bias drift, time shifting, channel masking
+push, pull, left, right, clockwise, anti_clockwise, bye_bye, clapping, one_arm_boxing, t_arms, raise_arms, palm_up, palm_down
