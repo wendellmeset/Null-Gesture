@@ -114,7 +114,8 @@ class MMWaveSensor:
         if start_cmd is None:
             raise ValueError("No sensorStart in config")
 
-        self._serial.reset_input_buffer()
+        if self._serial is not None:
+            self._serial.reset_input_buffer()
         logger.debug("> %s", start_cmd)
         self._write_cli(start_cmd)
         logger.info("Radar configured — streaming started")
@@ -131,10 +132,12 @@ class MMWaveSensor:
         return cmds
 
     def _write_cli(self, cmd: str) -> None:
+        assert self._serial is not None
         self._serial.write((cmd + "\n").encode("ascii"))
         self._serial.flush()
 
     def _read_text(self, quiet_time: float = 0.15, max_time: float = 2.0) -> str:
+        assert self._serial is not None
         start = time.monotonic()
         last_rx = start
         chunks = []
@@ -196,6 +199,7 @@ class MMWaveSensor:
             return False
 
     def _read_exact(self, count: int, timeout_s: float) -> bytes:
+        assert self._serial is not None
         out = bytearray()
         deadline = time.monotonic() + timeout_s
         while len(out) < count:
@@ -323,8 +327,8 @@ class MMWaveSensor:
             try:
                 self._write_cli("sensorStop 0")
                 time.sleep(0.1)
-            except Exception:
-                pass
+            except OSError:
+                logger.debug("sensorStop ignored during disconnect")
         self._connected = False
         if self._serial:
             self._serial.close()
