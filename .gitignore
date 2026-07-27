@@ -10,5 +10,5 @@ logs/
 *~
 
 # Trained models
-data/raw/*.npy
-null_gesture/models/saved/*.pt
+# data/raw/*.npy
+# null_gesture/models/saved/*.pt
