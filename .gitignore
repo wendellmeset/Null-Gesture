@@ -1,0 +1,37 @@
+# Bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+*.egg
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Training data & runtime artifacts
+data/
+*.pkl
+!src/models/pretrained/*.pkl
+
+# Logs
+*.log
+
+# Local config overrides
+configs/local.yaml
