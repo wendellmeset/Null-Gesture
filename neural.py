@@ -1,6 +1,7 @@
 import keras
 import numpy as np
 import pandas as pd
+import pickle
 from keras import layers
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
@@ -55,3 +56,6 @@ fit_model = model.fit(
     ]
 )
 print(model.summary())
+model.save("gesture_model.h5")
+with open("gesture_scaler.pkl", "wb") as f:
+    pickle.dump(scaler, f)
