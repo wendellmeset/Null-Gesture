@@ -251,21 +251,22 @@ def diagnose_gesture(
             "conflict": last_fused.get("conflict"),
             "ignorance": last_fused.get("ignorance"),
         }
-        # Top 3 beliefs
         beliefs = last_fused.get("beliefs", {})
         top3 = sorted(beliefs.items(), key=lambda x: x[1], reverse=True)[:3]
         analysis["top3_beliefs"] = top3
 
-    # Motion detector internals
+    # Motion detector internals — DTW on normalized sequences
     if len(raw_imu_gyro_z) >= 30:
-        gz_seq = _normalize_seq(np.array(raw_imu_gyro_z[-30:]))
-        ax_seq = _normalize_seq(np.array(raw_imu_accel_x[-30:]))
+        gz_norm = _normalize_seq(np.array(raw_imu_gyro_z[-30:]))
+        ax_norm = _normalize_seq(np.array(raw_imu_accel_x[-30:]))
         analysis["dtw_debug"] = {
-            "cw_distance": _dtw_distance(gz_seq, motion._templates.get("clockwise", np.zeros(50))),
-            "acw_distance": _dtw_distance(gz_seq, motion._templates.get("anti_clockwise", np.zeros(50))),
-            "left_distance": _dtw_distance(ax_seq, motion._templates.get("left", np.zeros(50))),
-            "right_distance": _dtw_distance(ax_seq, motion._templates.get("right", np.zeros(50))),
+            "cw_distance": _dtw_distance(gz_norm, _normalize_seq(motion._templates.get("clockwise", np.zeros(1)))),
+            "acw_distance": _dtw_distance(gz_norm, _normalize_seq(motion._templates.get("anti_clockwise", np.zeros(1)))),
+            "left_distance": _dtw_distance(ax_norm, _normalize_seq(motion._templates.get("left", np.zeros(1)))),
+            "right_distance": _dtw_distance(ax_norm, _normalize_seq(motion._templates.get("right", np.zeros(1)))),
         }
+        analysis["gyro_z_zcr"] = float(np.sum(np.abs(np.diff(np.signbit(raw_imu_gyro_z[-30:])))) / max(1, len(raw_imu_gyro_z[-30:]) - 1))
+        analysis["gyro_z_mean"] = float(np.mean(raw_imu_gyro_z[-30:]))
 
     return analysis
 
@@ -323,6 +324,13 @@ def print_analysis(analysis: dict) -> None:
         print(f"\n── DTW Distances (lower = better match) ──")
         for key in ["cw_distance", "acw_distance", "left_distance", "right_distance"]:
             print(f"  {key}: {dtw[key]:.4f}")
+
+    zcr = analysis.get("gyro_z_zcr")
+    gz_mean = analysis.get("gyro_z_mean")
+    if zcr is not None:
+        print(f"\n── Motion Physics ──")
+        print(f"  gyro_z ZCR: {zcr:.3f}  (high=oscillation/wave, low=rotation/circle)")
+        print(f"  gyro_z mean: {gz_mean:+.3f} rad/s  (+CW, -ACW, ~0=wave)")
 
     # Fusion
     fused = analysis.get("final_fusion", {})

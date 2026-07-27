@@ -332,9 +332,12 @@ class MotionGestureDetector:
         self._window.push(ax, ay, az, gx, gy, gz)
 
     def detect(self) -> dict[str, float]:
-        """Return belief masses for motion gestures.
+        """Return belief masses for motion gestures using physics-informed rules.
 
-        Returns dict with gesture names + 'unknown' key. Sum = 1.0.
+        - CW/ACW: gyro_z mean sign + DTW on z-score-normalized sequences
+        - Left/Right: accel_x transient peak detection
+        - Bye-Bye: high ZCR on gyro_z (oscillation) + low |mean| (centered)
+        - Boxing: accel magnitude peaks
         """
         result: dict[str, float] = {g: 0.0 for g in self.GESTURES}
         result["unknown"] = 1.0
@@ -346,76 +349,116 @@ class MotionGestureDetector:
         if not features:
             return result
 
-        # ── DTW scores ──────────────────────────────────────────────
-        dtw_scores: dict[str, float] = {}
-        ax_seq = np.array(list(self._window._ax))
-        gz_seq = np.array(list(self._window._gz))
+        ax_seq = np.array(list(self._window._ax), dtype=np.float64)
+        ay_seq = np.array(list(self._window._ay), dtype=np.float64)
+        az_seq = np.array(list(self._window._az), dtype=np.float64)
+        gz_seq = np.array(list(self._window._gz), dtype=np.float64)
+        amag_seq = np.array(list(self._window._amag), dtype=np.float64)
 
-        # Clockwise / Anti-Clockwise: gyro_z
-        dtw_scores["clockwise"] = _dtw_distance(gz_seq, self._templates["clockwise"])
-        dtw_scores["anti_clockwise"] = _dtw_distance(gz_seq, self._templates["anti_clockwise"])
+        gz_mean = float(np.mean(gz_seq))
+        gz_std = float(np.std(gz_seq))
+        gz_zcr = features.get("gz_zcr", 0.0)
+        ax_mean = float(np.mean(ax_seq))
+        ax_std = float(np.std(ax_seq))
+        ax_range = float(np.ptp(ax_seq))
 
-        # Left / Right: accel_x
-        dtw_scores["left"] = _dtw_distance(ax_seq, self._templates["left"])
-        dtw_scores["right"] = _dtw_distance(ax_seq, self._templates["right"])
+        # ── CW / ACW: constant rotation around Z ─────────────────────
+        # Circle = sustained non-zero gyro_z mean, low ZCR (not oscillating)
+        circle_magnitude = abs(gz_mean)
+        is_circle_like = circle_magnitude > 0.3 and gz_zcr < 0.15
 
-        # Convert DTW distances to confidences (shorter distance = higher confidence)
-        min_dist = min(dtw_scores.values()) if dtw_scores else 1.0
-        dtw_confidence: dict[str, float] = {}
-        for g in ["clockwise", "anti_clockwise", "left", "right"]:
-            dist = dtw_scores.get(g, float("inf"))
-            dtw_confidence[g] = math.exp(-1.5 * dist / (min_dist + 1e-10))
+        cw_score = 0.0
+        acw_score = 0.0
 
-        # ── Rule-based detection for boxing and bye-bye ─────────────
-        rule_confidence: dict[str, float] = {}
+        if is_circle_like:
+            # Direction from sign of mean gyro_z
+            if gz_mean > 0:
+                cw_score = min(1.0, circle_magnitude / 2.5)
+                acw_score = 0.0
+            else:
+                acw_score = min(1.0, circle_magnitude / 2.5)
+                cw_score = 0.0
 
-        # Bye-Bye: periodic gyro_z oscillation at 2-4 Hz
-        gz_dom_freq = features.get("gyro_z_dom_freq", 0.0)
-        gz_energy_ratio = features.get("gyro_z_energy_ratio_lo_hi", 0.0)
-        if 1.5 <= gz_dom_freq <= 5.0 and gz_energy_ratio > 0.5:
-            rule_confidence["bye_bye"] = min(1.0, gz_energy_ratio * 1.5)
-        else:
-            rule_confidence["bye_bye"] = 0.0
+            # DTW corroboration: normalize both sequences for shape comparison
+            gz_norm = _normalize_seq(gz_seq)
+            cw_tmpl = _normalize_seq(self._templates.get("clockwise", np.zeros(1)))
+            acw_tmpl = _normalize_seq(self._templates.get("anti_clockwise", np.zeros(1)))
+            dtw_cw = _dtw_distance(gz_norm, cw_tmpl)
+            dtw_acw = _dtw_distance(gz_norm, acw_tmpl)
+            # Boost the correct direction, penalize the wrong one
+            if dtw_cw < dtw_acw:
+                cw_score = min(1.0, cw_score * 1.3)
+                acw_score *= 0.5
+            else:
+                acw_score = min(1.0, acw_score * 1.3)
+                cw_score *= 0.5
 
-        # Boxing: periodic accel magnitude peaks
+        # ── Left / Right: accel_x transient ───────────────────────────
+        # A lateral hand movement produces a brief accel impulse
+        # Detect by: large ax_range relative to std, and ax_mean away from baseline
+        ax_baseline = 0.0  # gravity-removed accel should center around 0
+        ax_deviation = abs(ax_mean - ax_baseline)
+        is_transient = ax_range > 0.2 and ax_range > ax_std * 2.0
+
+        left_score = 0.0
+        right_score = 0.0
+
+        if is_transient:
+            # Direction from sign of accel_x deviation
+            if ax_mean > ax_baseline + 0.1:
+                left_score = min(1.0, ax_range / 1.5)
+                right_score = 0.0
+            elif ax_mean < ax_baseline - 0.1:
+                right_score = min(1.0, ax_range / 1.5)
+                left_score = 0.0
+
+            # DTW corroboration (normalize both)
+            ax_norm = _normalize_seq(ax_seq)
+            left_tmpl = _normalize_seq(self._templates.get("left", np.zeros(1)))
+            right_tmpl = _normalize_seq(self._templates.get("right", np.zeros(1)))
+            dtw_left = _dtw_distance(ax_norm, left_tmpl)
+            dtw_right = _dtw_distance(ax_norm, right_tmpl)
+            if dtw_left < dtw_right:
+                left_score = min(1.0, left_score * 1.3)
+                right_score *= 0.5
+            else:
+                right_score = min(1.0, right_score * 1.3)
+                left_score *= 0.5
+
+        # ── Bye-Bye: oscillating gyro_z (high ZCR, ~zero mean) ───────
+        # Wave = rapid sign changes on gyro_z, mean ~0, high std
+        is_oscillation = gz_zcr > 0.3 and abs(gz_mean) < 1.0 and gz_std > 1.5
+
+        bye_score = 0.0
+        if is_oscillation:
+            # Strength based on ZCR and gyro magnitude
+            bye_score = min(1.0, (gz_zcr - 0.3) * (gz_std / 4.0) * 1.5)
+
+        # ── Boxing: accel magnitude peaks ─────────────────────────────
         amag_peaks = features.get("amag_peak_count", 0.0)
         amag_std = features.get("amag_std", 0.0)
         amag_range = features.get("amag_range", 0.0)
 
         boxing_score = 0.0
-        if amag_peaks >= 1 and amag_std > 2.0:  # thresholds tuned for typical boxing
-            boxing_score = min(1.0, (amag_peaks / 5.0) * (amag_range / 6.0))
+        if amag_peaks >= 1 and amag_std > 0.8:
+            boxing_score = min(1.0, (amag_peaks / 4.0) * (amag_range / 3.0))
 
-        # One-arm: sustained peaks on same hand
-        rule_confidence["one_arm_boxing"] = boxing_score * 0.7
+        # ── Assemble ──────────────────────────────────────────────────
+        combined = {
+            "clockwise": cw_score,
+            "anti_clockwise": acw_score,
+            "left": left_score,
+            "right": right_score,
+            "bye_bye": bye_score,
+            "one_arm_boxing": boxing_score * 0.7,
+            "two_arm_boxing": boxing_score * 0.5,
+        }
 
-        # Two-arm boxing requires RFID hand-toggle; here we set a baseline
-        # The fusion engine will combine with RFID data
-        rule_confidence["two_arm_boxing"] = boxing_score * 0.5
-
-        # ── Combine confidences ─────────────────────────────────────
-        combined: dict[str, float] = {}
-        for g in self.GESTURES:
-            dtw = dtw_confidence.get(g, 0.0)
-            rule = rule_confidence.get(g, 0.0)
-            combined[g] = dtw * self._dtw_weight + rule * (1.0 - self._dtw_weight)
-
-        # If RF is trained, also add its prediction
-        if self._feature_names and len(self._rf.trees) > 0:
-            feat_vec = np.array([features.get(f, 0.0) for f in self._feature_names])
-            rf_probs = self._rf.predict_proba(feat_vec.reshape(1, -1))[0]
-            for i, cls in enumerate(self._rf.classes_):
-                if cls in combined:
-                    combined[cls] = combined[cls] * (1 - self._rf_weight) + rf_probs[i] * self._rf_weight
-
-        # Normalize to sum ≤ 1, put remainder in unknown
         total = sum(combined.values())
         if total > 0:
-            scale = 0.9 / total  # leave room for unknown
+            scale = 0.9 / total
             for g in self.GESTURES:
                 result[g] = combined[g] * scale
             result["unknown"] = 1.0 - sum(result[g] for g in self.GESTURES)
-        else:
-            result["unknown"] = 1.0
 
         return result
