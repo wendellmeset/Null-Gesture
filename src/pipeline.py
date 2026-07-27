@@ -143,6 +143,22 @@ class GesturePipeline:
 
         return status
 
+    def calibrate(self, timeout_s: float = 5.0) -> bool:
+        """Drive frames through preprocessor until calibration completes.
+
+        Must be called after start(), before events().
+        Returns True if calibration completed within timeout.
+        """
+        deadline = time.time() + timeout_s
+        while not self._preprocessor.is_calibrated():
+            if time.time() > deadline:
+                _log.warning("Calibration timed out after %.1fs", timeout_s)
+                return False
+            frame = self._multiplexer.read_frame()
+            self._preprocessor.process(frame)
+            time.sleep(0.005)
+        return True
+
     def stop(self) -> None:
         """Stop all sensors and clean up."""
         self._running = False

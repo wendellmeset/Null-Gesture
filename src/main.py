@@ -230,9 +230,10 @@ def main() -> None:
         sys.exit(1)
 
     print(f"\nCalibrating ({args.calibration_frames} frames)...")
-    while not pipeline.calibrated:
-        time.sleep(0.01)
-    print("Calibration complete.\n")
+    if not pipeline.calibrate(timeout_s=5.0):
+        print("WARNING: Calibration timed out — detection may be less accurate.")
+    else:
+        print("Calibration complete.")
     print("Detecting gestures... Press Ctrl+C to stop.\n")
 
     # ── Run ─────────────────────────────────────────────────────────

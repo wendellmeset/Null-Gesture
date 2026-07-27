@@ -104,7 +104,10 @@ class MMWaveWindow:
         if len(self._velocities) < 2:
             return feats
 
-        all_vels = np.concatenate([v for v in self._velocities if len(v) > 0])
+        vel_list = [v for v in self._velocities if len(v) > 0]
+        if not vel_list:
+            return feats
+        all_vels = np.concatenate(vel_list)
 
         if len(all_vels) < 5:
             return feats

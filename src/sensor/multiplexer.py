@@ -128,52 +128,116 @@ class SensorMultiplexer:
 
         self._buffer_capacity = buffer_capacity
 
+    # ── Auto-detection helpers ──────────────────────────────────────────
+
+    @staticmethod
+    def _list_usb_ports() -> list[tuple[str, int, int, str]]:
+        """Return [(device, vid, pid, description), ...] for USB serial ports."""
+        try:
+            import serial.tools.list_ports
+        except ImportError:
+            return []
+        results: list[tuple[str, int, int, str]] = []
+        for info in serial.tools.list_ports.comports():
+            if info.device and info.vid is not None:
+                results.append((info.device, info.vid, info.pid, info.description or ""))
+        return results
+
+    @staticmethod
+    def _probe_imu_port(candidate: str) -> bool:
+        """Test if a port produces valid IMU data (fast — stops on first valid sample)."""
+        try:
+            import time as _time
+            from Readers.imu import IMUReader as _IMU
+            reader = _IMU(candidate)
+            if not reader.connect():
+                return False
+            # Read up to 1 second — but stop on first valid sample
+            deadline = _time.time() + 1.0
+            while _time.time() < deadline:
+                sample = reader.read()
+                if sample and all(k in sample for k in ("ax", "ay", "az")):
+                    reader.disconnect()
+                    return True
+                _time.sleep(0.02)
+            reader.disconnect()
+        except Exception:
+            pass
+        return False
+
+    @staticmethod
+    def _probe_mmwave_port(candidate: str) -> bool:
+        """Test if a port has mmWave radar by attempting a lightweight connection."""
+        try:
+            import serial, time as _time
+            # Open without DTR/RTS toggle to avoid resetting the radar
+            ser = serial.Serial(candidate, 115200, timeout=0.5)
+            ser.dtr = False
+            ser.rts = False
+            _time.sleep(0.5)
+            # Send a newline to wake CLI if in config mode
+            ser.write(b"\n")
+            _time.sleep(0.3)
+            # Read whatever is available
+            ser.timeout = 0.3
+            data = b""
+            for _ in range(5):
+                chunk = ser.read(512)
+                if chunk:
+                    data += chunk
+                else:
+                    break
+            ser.close()
+            if not data:
+                return False
+            MAGIC = b"\x02\x01\x04\x03\x06\x05\x08\x07"
+            if MAGIC in data:
+                return True
+            text = data.decode("utf-8", errors="ignore").lower()
+            if any(kw in text for kw in ("tlv", "frame time", "mmwdemo", "mmwave", "iwrl", "xwr", "pointcloud")):
+                return True
+            # If we received substantial binary data, it's likely a radar
+            return len(data) > 200
+        except Exception:
+            return False
+
+    @staticmethod
+    def _find_uwb_ports() -> list[str]:
+        """Find UWB DWM3001CDK boards by Nordic nRF52 VID:PID."""
+        ports = SensorMultiplexer._list_usb_ports()
+        return sorted(
+            dev for dev, vid, pid, _desc in ports
+            if vid == 0x1915 and pid in (0x520F, 0x521F)
+        )
+
+
     # ── Lifecycle ────────────────────────────────────────────────────────
 
     def start(self) -> dict[str, bool]:
         """Start all configured sensor reader threads.
 
+        Ports explicitly provided → use those.
+        Ports left as None → auto-detect from available USB devices.
+
         Returns a dict of sensor_name -> connected status.
         """
         status: dict[str, bool] = {}
+        self._running = False
 
-        # IMU
-        if self._imu_port:
-            try:
-                imu = IMUReader(self._imu_port)
-                if imu.connect():
-                    self._readers["imu"] = imu
-                    self._buffers["imu"] = RingBuffer(self._buffer_capacity)
-                    self._threads["imu"] = threading.Thread(
-                        target=self._imu_worker, name="imu-reader", daemon=True
-                    )
-                    status["imu"] = True
-                else:
-                    status["imu"] = False
-            except Exception:
-                status["imu"] = False
+        # ── UWB (auto-detect nRF52 boards) ──────────────────────────
+        initiator = self._uwb_initiator
+        responder = self._uwb_responder
+        if not initiator or not responder:
+            uwb_ports = self._find_uwb_ports()
+            if len(uwb_ports) >= 2:
+                if not responder:
+                    responder = uwb_ports[0]
+                if not initiator:
+                    initiator = uwb_ports[1]
 
-        # mmWave
-        if self._mmwave_port:
+        if initiator and responder:
             try:
-                radar = MMWaveReader(self._mmwave_port)
-                radar.connect(config=self._mmwave_config)
-                self._readers["mmwave"] = radar
-                self._buffers["mmwave"] = RingBuffer(self._buffer_capacity)
-                self._threads["mmwave"] = threading.Thread(
-                    target=self._mmwave_worker, name="mmwave-reader", daemon=True
-                )
-                status["mmwave"] = True
-            except Exception:
-                status["mmwave"] = False
-
-        # UWB (dual-board mode)
-        if self._uwb_initiator and self._uwb_responder:
-            try:
-                uwb = UWBReader(
-                    initiator_port=self._uwb_initiator,
-                    responder_port=self._uwb_responder,
-                )
+                uwb = UWBReader(initiator_port=initiator, responder_port=responder)
                 if uwb.connect():
                     self._readers["uwb"] = uwb
                     self._buffers["uwb"] = RingBuffer(self._buffer_capacity)
@@ -186,7 +250,65 @@ class SensorMultiplexer:
             except Exception:
                 status["uwb"] = False
 
-        # RFID
+        # ── IMU (auto-detect by probing all non-UWB ports) ──────────
+        imu_port = self._imu_port
+        if not imu_port:
+            claimed = {initiator, responder}
+            all_ports = self._list_usb_ports()
+            # Prefer /dev/ttyACM* for IMU (ESP32 typically on ACM)
+            candidates = sorted(
+                [dev for dev, _v, _p, _d in all_ports if dev not in claimed],
+                key=lambda d: (0 if 'ACM' in d else 1, d)
+            )
+            for c in candidates:
+                if self._probe_imu_port(c):
+                    imu_port = c
+                    break
+
+        if imu_port:
+            try:
+                imu = IMUReader(imu_port)
+                if imu.connect():
+                    self._readers["imu"] = imu
+                    self._buffers["imu"] = RingBuffer(self._buffer_capacity)
+                    self._threads["imu"] = threading.Thread(
+                        target=self._imu_worker, name="imu-reader", daemon=True
+                    )
+                    status["imu"] = True
+                else:
+                    status["imu"] = False
+            except Exception:
+                status["imu"] = False
+
+        # ── mmWave (auto-detect by probing all non-claimed ports) ────
+        mmwave_port = self._mmwave_port
+        if not mmwave_port:
+            claimed = {initiator, responder, imu_port}
+            all_ports = self._list_usb_ports()
+            # Prefer /dev/ttyUSB* for mmWave (radar typically on USB-UART)
+            candidates = sorted(
+                [dev for dev, _v, _p, _d in all_ports if dev not in claimed],
+                key=lambda d: (0 if 'USB' in d else 1, d)
+            )
+            for c in candidates:
+                if self._probe_mmwave_port(c):
+                    mmwave_port = c
+                    break
+
+        if mmwave_port:
+            try:
+                radar = MMWaveReader(mmwave_port)
+                radar.connect(config=self._mmwave_config)
+                self._readers["mmwave"] = radar
+                self._buffers["mmwave"] = RingBuffer(self._buffer_capacity)
+                self._threads["mmwave"] = threading.Thread(
+                    target=self._mmwave_worker, name="mmwave-reader", daemon=True
+                )
+                status["mmwave"] = True
+            except Exception:
+                status["mmwave"] = False
+
+        # ── RFID ────────────────────────────────────────────────────
         if self._rfid_port:
             try:
                 rfid = RFIDReader(port=self._rfid_port)
@@ -202,7 +324,6 @@ class SensorMultiplexer:
             except Exception:
                 status["rfid"] = False
         elif self._rfid_port is None:
-            # Try auto-detect
             try:
                 rfid = RFIDReader()
                 if rfid.connect():
@@ -289,31 +410,43 @@ class SensorMultiplexer:
     def _imu_worker(self) -> None:
         reader = self._readers["imu"]
         buf = self._buffers["imu"]
-        for sample in reader:
-            if self._stop_event.is_set():
-                break
-            buf.push(sample)
+        try:
+            for sample in reader:
+                if self._stop_event.is_set():
+                    break
+                buf.push(sample)
+        except Exception:
+            pass
 
     def _mmwave_worker(self) -> None:
         reader = self._readers["mmwave"]
         buf = self._buffers["mmwave"]
-        for points, velocities in reader:
-            if self._stop_event.is_set():
-                break
-            buf.push((points, velocities))
+        try:
+            for points, velocities in reader:
+                if self._stop_event.is_set():
+                    break
+                buf.push((points, velocities))
+        except Exception:
+            pass
 
     def _uwb_worker(self) -> None:
         reader = self._readers["uwb"]
         buf = self._buffers["uwb"]
-        for sample in reader:
-            if self._stop_event.is_set():
-                break
-            buf.push(sample)
+        try:
+            for sample in reader:
+                if self._stop_event.is_set():
+                    break
+                buf.push(sample)
+        except Exception:
+            pass
 
     def _rfid_worker(self) -> None:
         reader = self._readers["rfid"]
         buf = self._buffers["rfid"]
-        for tag in reader:
-            if self._stop_event.is_set():
-                break
-            buf.push(tag)
+        try:
+            for tag in reader:
+                if self._stop_event.is_set():
+                    break
+                buf.push(tag)
+        except Exception:
+            pass
