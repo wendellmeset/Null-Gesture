@@ -152,7 +152,7 @@ class MMWave3DWindow(QtWidgets.QWidget):
             return
 
         self._radar.ingest()
-        points = self._radar.get_point_cloud()
+        points = self._radar.points
         hand = self._radar.get_dominant_point()
 
         n_pts = len(points)
