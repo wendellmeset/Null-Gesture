@@ -99,9 +99,19 @@ class MMWaveSensor:
             self._write_cli(cmd)
             reply = self._read_text(quiet_time=0.15)
 
+            # If reply is non-ASCII, radar is already streaming binary frames
+            if reply and not all(32 <= ord(c) < 127 or c in '\n\r\t' for c in reply):
+                logger.info("Radar already streaming — skipping config")
+                if self._serial:
+                    self._serial.reset_input_buffer()
+                return
+
             reply_lower = reply.lower()
             if any(p in reply_lower for p in CLI_FAILURE):
-                if name in {"cfarScndPassCfg", "compressionCfg"}:
+                if name in {"cfarScndPassCfg", "compressionCfg", "antGeometryCfg",
+                            "sigProcChainCfg", "aoaFovCfg", "rangeSelCfg",
+                            "clutterRemoval", "compRangeBiasAndRxChanPhase",
+                            "adcDataSource", "adcLogging", "factoryCalibCfg"}:
                     logger.debug("Skipping unsupported: %s", name)
                     continue
                 raise RuntimeError(f"CLI error for {cmd}: {reply.strip()}")

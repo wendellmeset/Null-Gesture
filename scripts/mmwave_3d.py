@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""3D mmWave point cloud viewer — real-time object visualization.
-
-Shows detected points as colored spheres, highlights the dominant (hand) point,
-draws a motion trail, and displays range/velocity info.
+"""Simple mmWave 3D viewer — raw point cloud, no fancy models.
 
 Usage:
-    PYTHONPATH=. venv/bin/python scripts/mmwave_3d.py --port /dev/ttyACM1
+    PYTHONPATH=. venv/bin/python scripts/mmwave_3d.py --port /dev/ttyUSB0
 """
+
 from __future__ import annotations
 
 import sys
+import time
 from collections import deque
 
 import numpy as np
-import pyqtgraph.opengl as gl
 from PyQt6 import QtCore, QtWidgets
+import pyqtgraph as pg
+import pyqtgraph.opengl as gl
 
 from null_gesture.sensors.mmwave import MMWaveSensor
 
@@ -24,201 +24,124 @@ class MMWave3DWindow(QtWidgets.QWidget):
         super().__init__()
         self._port = port
         self._config_file = config_file
-
         self._radar = MMWaveSensor()
         self._radar_ok = False
-
-        # Point cloud display items (reusable pool)
-        self._point_spheres: list[gl.GLMeshItem] = []
-        self._max_points = 30
-
-        # Hand point (larger, highlighted)
-        self._hand_sphere: gl.GLMeshItem | None = None
-        self._hand_trail_pts: deque[np.ndarray] = deque(maxlen=200)
+        self._last_tick = time.time()
+        self._trail: deque[np.ndarray] = deque(maxlen=100)
 
         self._init_ui()
-        self._init_timer()
-        self._connect()
+        QtCore.QTimer.singleShot(100, self._connect)
+        self._timer = QtCore.QTimer()
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(80)
 
     def _connect(self) -> None:
-        self._radar_ok = self._radar.connect(self._port, 115200, self._config_file)
-        if self._radar_ok:
-            self._status.setText(f"Connected — {self._port}")
-        else:
-            self._status.setText(f"Failed — {self._port}")
-
-    # ── UI ─────────────────────────────────────────────────────────
+        try:
+            self._radar_ok = self._radar.connect(self._port, 115200, self._config_file)
+        except Exception as e:
+            print(f"Config failed: {e}")
+            self._radar.disconnect()
+            self._radar_ok = self._radar.connect(self._port, 115200)
+        self._status.setText("Connected" if self._radar_ok else "Failed")
 
     def _init_ui(self) -> None:
-        self.setWindowTitle("mmWave 3D — Point Cloud Viewer")
-        self.resize(900, 750)
+        self.setWindowTitle("mmWave 3D Viewer")
+        self.resize(900, 700)
         self.setStyleSheet("background-color: #0d1117;")
-
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # 3D view
         self._view = gl.GLViewWidget()
         self._view.setBackgroundColor("#0d1117")
-        self._view.setCameraPosition(distance=3.5, elevation=25, azimuth=-50)
+        self._view.setCameraPosition(distance=1.5, elevation=15, azimuth=-70)
 
-        # Floor grid
-        g = gl.GLGridItem()
-        g.setSize(4, 4)
-        g.setSpacing(0.5, 0.5)
-        g.setColor("#30363d55")
-        g.rotate(90, 1, 0, 0)
+        # Grid
+        g = gl.GLGridItem(); g.setSize(2, 2); g.setSpacing(0.2, 0.2); g.setColor("#30363d44")
         self._view.addItem(g)
 
-        # Axes (X=red right, Y=green up, Z=blue forward)
-        for i, c in enumerate([(1, 0, 0, 0.7), (0, 1, 0, 0.7), (0, 0, 1, 0.7)]):
-            pts = np.zeros((2, 3))
-            pts[1, i] = 2.0
-            self._view.addItem(gl.GLLinePlotItem(pos=pts, color=c, width=2, antialias=True))
+        # Axes
+        for i, c in enumerate([(1,0,0,.5),(0,1,0,.5),(0,0,1,.5)]):
+            pts = np.zeros((2,3)); pts[1,i] = 1.2
+            self._view.addItem(gl.GLLinePlotItem(pos=pts, color=c, width=1.5, antialias=True))
 
-        # Origin
-        self._view.addItem(gl.GLMeshItem(
-            meshdata=gl.MeshData.sphere(rows=8, cols=8, radius=0.03),
-            color=(1, 1, 1, 0.5), shader="shaded", smooth=True))
+        # Point cloud scatter
+        self._scatter = gl.GLScatterPlotItem(pos=np.zeros((1,3)), color=(0.3,0.6,0.9,0.7), size=5, pxMode=True)
+        self._view.addItem(self._scatter)
 
-        # Hand trail line
-        self._trail_line = gl.GLLinePlotItem(
-            pos=np.zeros((1, 3)), color=(1.0, 0.55, 0.1, 0.7), width=2, antialias=True)
+        # Trail
+        self._trail_line = gl.GLLinePlotItem(pos=np.zeros((1,3)), color=(1,0.5,0.1,0.6), width=2, antialias=True)
         self._view.addItem(self._trail_line)
 
-        # Point sphere pool
-        for i in range(self._max_points):
-            sph = gl.GLMeshItem(
-                meshdata=gl.MeshData.sphere(rows=6, cols=6, radius=0.03),
-                color=(0.35, 0.55, 0.85, 0.6), shader="shaded", smooth=True)
-            sph.setVisible(False)
-            self._point_spheres.append(sph)
-            self._view.addItem(sph)
-
-        # Hand sphere (larger, orange)
-        self._hand_sphere = gl.GLMeshItem(
-            meshdata=gl.MeshData.sphere(rows=10, cols=10, radius=0.05),
-            color=(1.0, 0.55, 0.1, 0.95), shader="shaded", smooth=True)
-        self._hand_sphere.setVisible(False)
-        self._view.addItem(self._hand_sphere)
+        # Hand dot
+        self._hand_dot = gl.GLScatterPlotItem(pos=np.zeros((1,3)), color=(1,0.55,0.1,1), size=10, pxMode=True)
+        self._view.addItem(self._hand_dot)
 
         layout.addWidget(self._view)
 
-        # ── Info overlay ───────────────────────────────────────────
-        self._overlay = QtWidgets.QLabel(self._view)
-        self._overlay.setStyleSheet(
-            "color: #8b949e; font-size: 11px; font-family: monospace; "
-            "background: transparent; padding: 8px;"
-        )
-        self._overlay.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-
-        # ── Bottom bar ────────────────────────────────────────────
-        bar = QtWidgets.QWidget()
-        bar.setFixedHeight(34)
+        # Bottom bar
+        bar = QtWidgets.QWidget(); bar.setFixedHeight(30)
         bar.setStyleSheet("background-color: #161b22;")
-        bl = QtWidgets.QHBoxLayout(bar)
-        bl.setContentsMargins(12, 0, 12, 0)
-        bl.setSpacing(14)
-
+        bl = QtWidgets.QHBoxLayout(bar); bl.setContentsMargins(8,0,8,0)
         self._status = QtWidgets.QLabel("Disconnected")
-        self._status.setStyleSheet("color: #8b949e; font-size: 11px; font-family: monospace;")
+        self._status.setStyleSheet("color: #8b949e; font-size: 10px; font-family: monospace;")
         bl.addWidget(self._status)
-
         bl.addStretch()
-
-        for label in ["points", "frame", "hand_pos"]:
-            lbl = QtWidgets.QLabel(f"{label}: —")
-            lbl.setStyleSheet("color: #484f58; font-size: 10px; font-family: monospace;")
-            setattr(self, f"_lbl_{label}", lbl)
-            bl.addWidget(lbl)
-
+        self._info = QtWidgets.QLabel("")
+        self._info.setStyleSheet("color: #484f58; font-size: 10px; font-family: monospace;")
+        bl.addWidget(self._info)
         layout.addWidget(bar)
-
-    def resizeEvent(self, a0):
-        super().resizeEvent(a0)
-        if a0 is not None:
-            self._overlay.setGeometry(0, 0, a0.size().width(), 30)
-
-    # ── Timer ──────────────────────────────────────────────────────
-
-    def _init_timer(self) -> None:
-        self._timer = QtCore.QTimer()
-        self._timer.timeout.connect(self._tick)
-        self._timer.start(50)  # 20 fps
 
     def _tick(self) -> None:
         if not self._radar_ok:
             return
+        for _ in range(5):
+            if not self._radar.read_frame(timeout_s=0.05):
+                break
 
-        self._radar.ingest()
-        points = self._radar.points
-        hand = self._radar.get_dominant_point()
+        pts = self._radar.points
+        hand = self._radar.get_dominant_point() if len(pts) > 0 else None
 
-        n_pts = len(points)
-
-        # ── Update point spheres ───────────────────────────────────
-        for i in range(self._max_points):
-            if i < n_pts:
-                pt = points[i]
-                T = np.eye(4, dtype=np.float32)
-                T[:3, 3] = pt
-                self._point_spheres[i].setTransform(T)
-                self._point_spheres[i].setVisible(True)
-            else:
-                self._point_spheres[i].setVisible(False)
-
-        # ── Update hand sphere ─────────────────────────────────────
-        if hand is not None and self._hand_sphere is not None:
-            T = np.eye(4, dtype=np.float32)
-            T[:3, 3] = hand
-            self._hand_sphere.setTransform(T)
-            self._hand_sphere.setVisible(True)
-
-            # Trail
-            self._hand_trail_pts.append(hand.copy())
-            trail = np.array(self._hand_trail_pts, dtype=np.float32)
-            self._trail_line.setData(pos=trail)
-
-        # ── Labels ─────────────────────────────────────────────────
-        self._lbl_points.setText(f"points: {n_pts}")  # type: ignore[attr-defined]
-        self._lbl_frame.setText(f"frame: {self._radar.frame_number}")  # type: ignore[attr-defined]
-
-        if hand is not None:
-            self._lbl_hand_pos.setText(f"hand: ({hand[0]:.2f}, {hand[1]:.2f}, {hand[2]:.2f})")  # type: ignore[attr-defined]
+        # Update scatter
+        if len(pts) > 0:
+            self._scatter.setData(pos=pts)
+            self._scatter.setVisible(True)
         else:
-            self._lbl_hand_pos.setText("hand: —")  # type: ignore[attr-defined]
+            self._scatter.setVisible(False)
 
-        # Overlay
-        vel_str = ""
-        if len(self._radar._velocities) > 0:
-            v = self._radar._velocities
-            vel_str = f"  |  vel: {v.min():+.1f}..{v.max():+.1f} m/s"
-        self._overlay.setText(
-            f"frame {self._radar.frame_number}  |  {n_pts} points{vel_str}"
-        )
+        # Hand dot + trail
+        if hand is not None:
+            self._hand_dot.setData(pos=hand.reshape(1, 3))
+            self._hand_dot.setVisible(True)
+            self._trail.append(hand.copy())
+            self._trail_line.setData(pos=np.array(self._trail, dtype=np.float32))
+        else:
+            self._hand_dot.setVisible(False)
 
-    def closeEvent(self, a0):
+        now = time.time()
+        fps = 1 / max(now - self._last_tick, 0.001)
+        self._last_tick = now
+        hstr = f"hand: ({hand[0]:.2f},{hand[1]:.2f})" if hand is not None else "hand: —"
+        self._info.setText(f"{len(pts)} pts | {hstr} | {fps:.0f}fps")
+
+    def closeEvent(self, event):
         if self._radar_ok:
             self._radar.disconnect()
-        super().closeEvent(a0)
+        super().closeEvent(event)
 
 
 def main() -> int:
     import argparse
-    p = argparse.ArgumentParser(description="mmWave 3D point cloud viewer")
-    p.add_argument("--port", default="/dev/ttyUSB0")
-    p.add_argument("--config", help="Path to .cfg file (default: config/mmwave_point_cloud.cfg)")
-    args = p.parse_args()
-
     from pathlib import Path
+    p = argparse.ArgumentParser()
+    p.add_argument("--port", default="/dev/ttyUSB0")
+    p.add_argument("--config")
+    args = p.parse_args()
     cfg = args.config or str(Path(__file__).resolve().parent.parent / "config" / "mmwave_point_cloud.cfg")
-
     app = QtWidgets.QApplication(sys.argv)
     win = MMWave3DWindow(port=args.port, config_file=cfg)
     win.show()
     return app.exec()
-
 
 if __name__ == "__main__":
     sys.exit(main())
