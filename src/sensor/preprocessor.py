@@ -286,9 +286,11 @@ class SensorPreprocessor:
     # ── IMU processing ───────────────────────────────────────────────────
 
     def _process_imu_gyro(self, imu: dict) -> tuple[float, float, float]:
-        gx = imu.get("gx", 0.0)
-        gy = imu.get("gy", 0.0)
-        gz = imu.get("gz", 0.0)
+        # IMU outputs gyro in degrees/sec; pipeline expects rad/sec
+        D2R = 0.017453292519943295  # math.pi / 180
+        gx = imu.get("gx", 0.0) * D2R
+        gy = imu.get("gy", 0.0) * D2R
+        gz = imu.get("gz", 0.0) * D2R
         return (gx, gy, gz)
 
     def _process_imu_accel(self, imu: dict) -> tuple[float, float, float]:
@@ -296,10 +298,11 @@ class SensorPreprocessor:
         ay = imu.get("ay", 0.0)
         az = imu.get("az", 0.0)
 
-        # Update AHRS orientation
-        gx = imu.get("gx", 0.0)
-        gy = imu.get("gy", 0.0)
-        gz = imu.get("gz", 0.0)
+        # Update AHRS orientation (gyro must be rad/s)
+        D2R = 0.017453292519943295
+        gx = imu.get("gx", 0.0) * D2R
+        gy = imu.get("gy", 0.0) * D2R
+        gz = imu.get("gz", 0.0) * D2R
         self._ahrs.update(gx, gy, gz, ax, ay, az)
 
         # Remove gravity

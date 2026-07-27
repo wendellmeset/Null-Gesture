@@ -64,8 +64,8 @@ class GesturePipeline:
         belief_threshold: float = 0.6,
         conflict_threshold: float = 0.3,
         # Pipeline tuning
-        calibration_frames: int = 50,
-        imu_window_samples: int = 50,
+        calibration_frames: int = 30,
+        imu_window_samples: int = 30,
         mmwave_window_frames: int = 10,
         # Verbose output
         verbose: bool = False,

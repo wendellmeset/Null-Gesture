@@ -149,8 +149,8 @@ def main() -> None:
     # Tuning
     parser.add_argument("--belief-threshold", type=float, default=0.6,
                         help="Minimum belief for gesture detection (default: 0.6)")
-    parser.add_argument("--calibration-frames", type=int, default=50,
-                        help="Frames for auto-calibration (default: 50)")
+    parser.add_argument("--calibration-frames", type=int, default=30,
+                        help="Frames for auto-calibration (default: 30)")
 
     # Output
     parser.add_argument("--json", action="store_true", help="Output events as JSON lines")
