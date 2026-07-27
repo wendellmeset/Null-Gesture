@@ -1,0 +1,15 @@
+Pull
+Push
+Clockwise
+Anti-Clockwise
+Left
+Right
+Bye-Bye
+One Arm Boxing
+Clapping
+Two-Arm Boxing
+T-Arms
+Raise Arms
+Soli
+Opening and Closing Fist
+Palm Up and Down
