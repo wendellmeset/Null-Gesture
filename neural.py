@@ -21,7 +21,7 @@ x_train = np.expand_dims(x_train, axis=-1)
 x_val = np.expand_dims(x_val, axis=-1)
 
 model = keras.Sequential([
-    layers.Input(shape=(13, 1)),
+    layers.Input(shape=(x_train.shape[1], 1)),
 
     layers.Conv1D(filters=16, kernel_size=3, activation='relu', padding='same'),
     layers.MaxPooling1D(pool_size=2),
