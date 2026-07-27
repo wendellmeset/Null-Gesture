@@ -20,11 +20,9 @@ from null_gesture.sensors.mmwave import MMWaveSensor
 
 
 class MMWave3DWindow(QtWidgets.QWidget):
-    def __init__(self, port: str = "/dev/ttyACM0", baud: int = 921600,
-                 config_file: str | None = None) -> None:
+    def __init__(self, port: str = "/dev/ttyUSB0", config_file: str | None = None) -> None:
         super().__init__()
         self._port = port
-        self._baud = baud
         self._config_file = config_file
 
         self._radar = MMWaveSensor()
@@ -43,9 +41,9 @@ class MMWave3DWindow(QtWidgets.QWidget):
         self._connect()
 
     def _connect(self) -> None:
-        self._radar_ok = self._radar.connect(self._port, self._baud, self._config_file)
+        self._radar_ok = self._radar.connect(self._port, 115200, self._config_file)
         if self._radar_ok:
-            self._status.setText(f"Connected — {self._port} @ {self._baud}")
+            self._status.setText(f"Connected — {self._port}")
         else:
             self._status.setText(f"Failed — {self._port}")
 
@@ -209,30 +207,15 @@ class MMWave3DWindow(QtWidgets.QWidget):
 def main() -> int:
     import argparse
     p = argparse.ArgumentParser(description="mmWave 3D point cloud viewer")
-    p.add_argument("--port", default="/dev/ttyACM1")
-    p.add_argument("--baud", type=int, default=921600)
-    p.add_argument("--config", help="Path to .cfg file for radar configuration")
-    p.add_argument("--dump", action="store_true", help="Dump raw bytes and exit")
+    p.add_argument("--port", default="/dev/ttyUSB0")
+    p.add_argument("--config", help="Path to .cfg file (default: config/mmwave_point_cloud.cfg)")
     args = p.parse_args()
 
-    if args.dump:
-        from null_gesture.sensors.mmwave import MMWaveSensor
-        r = MMWaveSensor()
-        if not r.connect(args.port, args.baud):
-            print(f"Failed to connect to {args.port}")
-            return 1
-        print(f"Connected @ {args.baud}. Reading raw data for 3s...")
-        data = r.dump_raw(1000)
-        print(f"Got {len(data)} bytes:")
-        for i in range(0, min(len(data), 512), 16):
-            hex_str = " ".join(f"{b:02x}" for b in data[i:i+16])
-            ascii_str = "".join(chr(b) if 32 <= b < 127 else "." for b in data[i:i+16])
-            print(f"  {i:04x}: {hex_str:<48s} {ascii_str}")
-        r.disconnect()
-        return 0
+    from pathlib import Path
+    cfg = args.config or str(Path(__file__).resolve().parent.parent / "config" / "mmwave_point_cloud.cfg")
 
     app = QtWidgets.QApplication(sys.argv)
-    win = MMWave3DWindow(port=args.port, baud=args.baud, config_file=args.config)
+    win = MMWave3DWindow(port=args.port, config_file=cfg)
     win.show()
     return app.exec()
 
