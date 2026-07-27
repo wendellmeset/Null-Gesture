@@ -81,15 +81,15 @@ class TemporalStateMachine:
             GestureEvent or None (no state change).
         """
         now = time.time()
-        gesture = fused["gesture"]
-        raw_confidence = fused["confidence"]
+        _gesture = fused["gesture"]
+        _raw_confidence = fused["confidence"]
         beliefs = fused["beliefs"]
 
         # Apply Kalman filter to smooth beliefs
         smoothed = self._kalman_smooth_all(beliefs, now)
 
         # Find best gesture from smoothed beliefs
-        best_gesture = max(smoothed, key=smoothed.get)
+        best_gesture = max(smoothed, key=lambda k: smoothed[k])
         best_confidence = smoothed[best_gesture]
 
         event: GestureEvent | None = None

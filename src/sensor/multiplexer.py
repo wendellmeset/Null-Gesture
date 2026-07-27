@@ -150,7 +150,7 @@ class SensorMultiplexer:
                     status["imu"] = True
                 else:
                     status["imu"] = False
-            except Exception:
+            except OSError:
                 status["imu"] = False
 
         # mmWave
@@ -164,7 +164,7 @@ class SensorMultiplexer:
                     target=self._mmwave_worker, name="mmwave-reader", daemon=True
                 )
                 status["mmwave"] = True
-            except Exception:
+            except OSError:
                 status["mmwave"] = False
 
         # UWB (dual-board mode)
@@ -183,7 +183,7 @@ class SensorMultiplexer:
                     status["uwb"] = True
                 else:
                     status["uwb"] = False
-            except Exception:
+            except OSError:
                 status["uwb"] = False
 
         # RFID
@@ -199,7 +199,7 @@ class SensorMultiplexer:
                     status["rfid"] = True
                 else:
                     status["rfid"] = False
-            except Exception:
+            except OSError:
                 status["rfid"] = False
         elif self._rfid_port is None:
             # Try auto-detect
@@ -214,13 +214,13 @@ class SensorMultiplexer:
                     status["rfid"] = True
                 else:
                     status["rfid"] = False
-            except Exception:
+            except OSError:
                 status["rfid"] = False
 
         self._running = True
 
         # Start threads
-        for name, thread in self._threads.items():
+        for thread in self._threads.values():
             thread.start()
 
         return status
@@ -230,13 +230,13 @@ class SensorMultiplexer:
         self._stop_event.set()
         self._running = False
 
-        for name, thread in self._threads.items():
+        for thread in self._threads.values():
             thread.join(timeout=2.0)
 
-        for name, reader in self._readers.items():
+        for reader in self._readers.values():
             try:
                 reader.disconnect()
-            except Exception:
+            except OSError:
                 pass
 
         self._readers.clear()

@@ -14,12 +14,11 @@ import math
 import pickle
 from collections import deque
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
 from src.features.imu_features import IMUWindow
-
 
 # ── DTW (Dynamic Time Warping) ───────────────────────────────────────────
 
@@ -168,9 +167,8 @@ class MinimalRandomForest:
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         """Train a random forest. X: (N, F), y: (N,)."""
         self.trees = []
-        n_samples, n_features = X.shape
+        n_samples = X.shape[0]
         self.classes_ = np.unique(y)
-        n_classes = len(self.classes_)
 
         for _ in range(self.n_trees):
             # Bootstrap sample
@@ -187,7 +185,7 @@ class MinimalRandomForest:
         if depth >= self.max_depth or len(unique_classes) == 1 or n_samples < 5:
             # Leaf: majority class
             counts = {c: int(np.sum(y == c)) for c in unique_classes}
-            return {"type": "leaf", "class": max(counts, key=counts.get), "counts": counts}
+            return {"type": "leaf", "class": max(counts, key=lambda k: counts[k]), "counts": counts}
 
         # Random subset of features
         n_features = X.shape[1]
@@ -218,7 +216,7 @@ class MinimalRandomForest:
         if best_feat < 0:
             # Can't split
             counts = {c: int(np.sum(y == c)) for c in unique_classes}
-            return {"type": "leaf", "class": max(counts, key=counts.get), "counts": counts}
+            return {"type": "leaf", "class": max(counts, key=lambda k: counts[k]), "counts": counts}
 
         # Split
         left_mask = X[:, best_feat] <= best_thresh
@@ -286,7 +284,7 @@ class MotionGestureDetector:
     Bye-Bye, One-Arm Boxing, Two-Arm Boxing.
     """
 
-    GESTURES = [
+    GESTURES: ClassVar[list[str]] = [
         "clockwise",
         "anti_clockwise",
         "left",

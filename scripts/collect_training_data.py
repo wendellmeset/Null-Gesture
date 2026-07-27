@@ -28,12 +28,10 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 # Add parent to path for src imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.sensor.multiplexer import SensorMultiplexer, SensorFrame
+from src.sensor.multiplexer import SensorFrame, SensorMultiplexer
 
 _log = logging.getLogger(__name__)
 
@@ -300,7 +298,7 @@ def main() -> None:
         # Save
         session_dir = collector.save()
 
-        print(f"\nTraining data collection complete!")
+        print("\nTraining data collection complete!")
         print(f"Next: python scripts/train_models.py --data {session_dir}")
 
     finally:

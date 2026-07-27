@@ -19,10 +19,10 @@ import signal
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
-from src.pipeline import GesturePipeline
 from src.fusion.temporal import GestureEvent
+from src.pipeline import GesturePipeline
 
 _log = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ class GestureDisplay:
     """Formatted terminal output for gesture events."""
 
     # Color codes for terminal
-    COLORS = {
+    COLORS: ClassVar[dict[str, str]] = {
         "start": "\033[92m",   # green
         "active": "\033[94m",  # blue
         "end": "\033[93m",     # yellow

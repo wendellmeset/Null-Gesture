@@ -10,17 +10,18 @@ from __future__ import annotations
 
 import math
 from collections import deque
+from typing import ClassVar
 
 import numpy as np
 
-from src.features.mmwave_features import MMWaveWindow
 from src.features.imu_features import IMUWindow
+from src.features.mmwave_features import MMWaveWindow
 
 
 class HandGestureDetector:
     """Detects hand articulation gestures: Fist Open/Close, Palm Up/Down."""
 
-    GESTURES = ["fist_open_close", "palm_up_down"]
+    GESTURES: ClassVar[list[str]] = ["fist_open_close", "palm_up_down"]
 
     def __init__(
         self,

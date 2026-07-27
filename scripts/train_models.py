@@ -19,12 +19,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import math
-import pickle
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
@@ -308,7 +305,7 @@ def train_hmm_parameters(data: dict[str, list[dict]]) -> dict[str, dict]:
         # Compute covariances per state
         covars = np.ones((n_states, n_features))
         for s in range(n_states):
-            mask = labels == s
+            mask = labels == s  # type: ignore[possibly-undefined]
             if np.sum(mask) > 1:
                 covars[s] = np.var(data_array[mask], axis=0) + 0.01
 
@@ -391,7 +388,7 @@ def main() -> None:
     # Summary
     print(f"\nModels saved to: {output_dir}")
     print(f"  dtw_templates.json — DTW templates for {list(dtw_templates.keys())}")
-    print(f"  motion_rf.pkl      — Random Forest classifier")
+    print("  motion_rf.pkl      — Random Forest classifier")
     print(f"  hmm_params.json    — HMM parameters for {list(hmm_params.keys())}")
 
     print("\nTraining complete! Models are ready for the detection pipeline.")

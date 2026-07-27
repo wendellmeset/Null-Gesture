@@ -8,25 +8,20 @@ Provides both a synchronous `run()` interface and an async generator.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from collections.abc import Iterator
-from pathlib import Path
-from typing import Any
 
-from src.sensor.multiplexer import SensorMultiplexer
-from src.sensor.preprocessor import SensorPreprocessor, PreprocessedFrame
-from src.features.imu_features import IMUWindow
-from src.features.mmwave_features import MMWaveWindow
-from src.features.uwb_features import UWBWindow, RFIDTracker
+from src.detectors.hand_gestures import HandGestureDetector
+from src.detectors.micro_doppler import MicroDopplerDetector
 from src.detectors.motion_gestures import MotionGestureDetector
 from src.detectors.posture_gestures import PostureGestureDetector
-from src.detectors.micro_doppler import MicroDopplerDetector
 from src.detectors.proximity_gestures import ProximityGestureDetector
-from src.detectors.hand_gestures import HandGestureDetector
+from src.features.uwb_features import RFIDTracker
 from src.fusion.dempster_shafer import DempsterShaferFusion
-from src.fusion.temporal import TemporalStateMachine, GestureEvent
+from src.fusion.temporal import GestureEvent, TemporalStateMachine
+from src.sensor.multiplexer import SensorMultiplexer
+from src.sensor.preprocessor import PreprocessedFrame, SensorPreprocessor
 
 _log = logging.getLogger(__name__)
 

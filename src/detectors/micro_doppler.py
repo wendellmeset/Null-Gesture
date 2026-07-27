@@ -10,6 +10,7 @@ Doppler shifts at 4-80 Hz. The IWRL6432 velocity resolution captures this.
 from __future__ import annotations
 
 import math
+from typing import ClassVar
 
 import numpy as np
 
@@ -19,7 +20,7 @@ from src.features.mmwave_features import MMWaveWindow
 class MicroDopplerDetector:
     """Binary detector for Soli (thumb/index finger rub) via micro-Doppler."""
 
-    GESTURES = ["soli"]
+    GESTURES: ClassVar[list[str]] = ["soli"]
 
     def __init__(
         self,
@@ -51,7 +52,6 @@ class MicroDopplerDetector:
             return result
 
         doppler = self._window.micro_doppler_features()
-        spatial = self._window.spatial_features()
 
         if not doppler:
             return result

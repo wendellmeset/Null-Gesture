@@ -6,18 +6,18 @@ confirmatory evidence.
 
 from __future__ import annotations
 
-import math
+from typing import ClassVar
 
 import numpy as np
 
-from src.features.uwb_features import UWBWindow
 from src.features.imu_features import IMUWindow
+from src.features.uwb_features import UWBWindow
 
 
 class ProximityGestureDetector:
     """Detects Pull and Push via UWB distance change + IMU confirmation."""
 
-    GESTURES = ["pull", "push"]
+    GESTURES: ClassVar[list[str]] = ["pull", "push"]
 
     def __init__(
         self,

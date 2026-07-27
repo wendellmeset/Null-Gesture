@@ -8,8 +8,7 @@ hand identity confirmation.
 
 from __future__ import annotations
 
-import math
-from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 
@@ -20,7 +19,7 @@ from src.features.uwb_features import RFIDTracker
 class PostureGestureDetector:
     """Detects postural gestures: T-Arms, Raise Arms, Clapping."""
 
-    GESTURES = ["t_arms", "raise_arms", "clapping"]
+    GESTURES: ClassVar[list[str]] = ["t_arms", "raise_arms", "clapping"]
 
     def __init__(
         self,
@@ -57,7 +56,7 @@ class PostureGestureDetector:
 
         # ── T-Arms: wide horizontal spread ──────────────────────────
         spread_x = spatial.get("spread_x_mean", 0.0)
-        spread_y = spatial.get("spread_y_mean", 0.0)
+        _spread_y = spatial.get("spread_y_mean", 0.0)
         centroid_y = spatial.get("centroid_y_mean", 0.0)
 
         # T-Arms: arms out horizontally → large x-spread, moderate y-spread
@@ -71,7 +70,6 @@ class PostureGestureDetector:
 
         # ── Raise Arms: centroid moving upward ──────────────────────
         centroid_vel_y = spatial.get("centroid_vel_y_mean", 0.0)
-        centroid_vel_mag = spatial.get("centroid_vel_mag_mean", 0.0)
 
         raise_arms_score = 0.0
         if centroid_vel_y > self._raise_arms_vel_y_threshold:
