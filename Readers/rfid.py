@@ -209,7 +209,7 @@ def _find_m7e_port(baud: int = 115200) -> str | None:
                     reader.get_model()
                     reader.stop_reading()
                     return port
-                except (OSError, AttributeError):
+                except (OSError, AttributeError, TypeError):
                     _log.debug("Retry for port %s failed", port)
                     continue
         except (OSError, AttributeError):

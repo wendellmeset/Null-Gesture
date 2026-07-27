@@ -150,7 +150,7 @@ class SensorMultiplexer:
                     status["imu"] = True
                 else:
                     status["imu"] = False
-            except OSError:
+            except Exception:
                 status["imu"] = False
 
         # mmWave
@@ -164,7 +164,7 @@ class SensorMultiplexer:
                     target=self._mmwave_worker, name="mmwave-reader", daemon=True
                 )
                 status["mmwave"] = True
-            except OSError:
+            except Exception:
                 status["mmwave"] = False
 
         # UWB (dual-board mode)
@@ -183,7 +183,7 @@ class SensorMultiplexer:
                     status["uwb"] = True
                 else:
                     status["uwb"] = False
-            except OSError:
+            except Exception:
                 status["uwb"] = False
 
         # RFID
@@ -199,7 +199,7 @@ class SensorMultiplexer:
                     status["rfid"] = True
                 else:
                     status["rfid"] = False
-            except OSError:
+            except Exception:
                 status["rfid"] = False
         elif self._rfid_port is None:
             # Try auto-detect
@@ -214,7 +214,7 @@ class SensorMultiplexer:
                     status["rfid"] = True
                 else:
                     status["rfid"] = False
-            except OSError:
+            except Exception:
                 status["rfid"] = False
 
         self._running = True
