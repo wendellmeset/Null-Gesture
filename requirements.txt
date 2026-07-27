@@ -1,0 +1,14 @@
+# Null-Gesture: Real-Time Gesture Detection System
+# Core dependencies
+
+# Sensor drivers
+pyserial>=3.5
+numpy>=1.24,<2.0
+scipy>=1.10
+
+# Optional: YAML config support
+pyyaml>=6.0
+
+# Optional: RFID reader (requires C library build)
+# See Readers/docs.md for setup instructions
+# python-mercuryapi is installed via Readers/mercury/install.py
