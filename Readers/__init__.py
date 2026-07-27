@@ -20,7 +20,7 @@ All readers support iteration::
     radar.connect()
     for points, velocities in radar:
         print(f"{len(points)} points detected")
-"""
+"""  # noqa: N999
 
 from Readers.imu import IMUReader
 from Readers.mmwave import MMWaveReader
