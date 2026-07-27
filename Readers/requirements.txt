@@ -1,0 +1,3 @@
+# Readers — minimal dependencies for USB device readers
+pyserial>=3.5
+numpy>=1.24
