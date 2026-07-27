@@ -1,1 +1,4 @@
-"""Sensor interfaces for IMU, RFID, and UWB data acquisition."""
+"""Sensor interfaces."""
+from null_gesture.sensors.imu import IMUSensor
+
+__all__ = ["IMUSensor"]

@@ -1,4 +1,7 @@
-"""IMU sensor: reads ESP32 + BMI270 via TCP or direct serial."""
+"""IMU sensor — ESP32 + BMI270 via serial or TCP.
+
+Reads 6-axis data: [ax, ay, az (g), gx, gy, gz (dps)].
+"""
 
 from __future__ import annotations
 
@@ -8,14 +11,8 @@ import re
 import socket
 import time
 from collections import deque
-from typing import TYPE_CHECKING
 
 import numpy as np
-
-if TYPE_CHECKING:
-    import serial
-
-from null_gesture.config import IMUConfig, imu_config as default_imu_config
 
 logger = logging.getLogger("null_gesture.sensors.imu")
 
@@ -27,20 +24,18 @@ _SAMPLE_RE = re.compile(
 )
 
 
-class IMUClient:
-    """Reads BMI270 IMU data via TCP or direct serial."""
+class IMUSensor:
+    """Reads BMI270 IMU data via TCP or serial."""
 
-    def __init__(self, config: IMUConfig | None = None) -> None:
-        self.config = config or default_imu_config
+    def __init__(self) -> None:
         self._socket: socket.socket | None = None
-        self._serial: serial.Serial | None = None  # type: ignore[name-defined]
+        self._serial = None
         self._mode: str = "none"
         self._rbuf: bytearray = bytearray()
         self._buffer: deque[tuple[float, np.ndarray]] = deque()
         self._connected = False
-        self._sample_count = 0
 
-    # ── Connect ──────────────────────────────────────────────────────
+    # ── Connect ──────────────────────────────────────────────────
 
     def connect_tcp(self, host: str = "127.0.0.1", port: int = 9999) -> bool:
         try:
@@ -71,19 +66,17 @@ class IMUClient:
         except OSError:
             return False
 
-    def connect(self, host: str = "127.0.0.1", port: int = 9999) -> bool:
-        return self.connect_tcp(host, port)
+    # ── Read ─────────────────────────────────────────────────────
 
-    # ── Read ──────────────────────────────────────────────────────────
-
-    def read_sample(self) -> dict | None:
+    def read_sample(self) -> np.ndarray | None:
+        """Read one 6-channel sample. Returns (6,) array or None."""
         if self._mode == "tcp":
             return self._read_tcp()
         if self._mode == "serial":
             return self._read_serial()
         return None
 
-    def _read_tcp(self) -> dict | None:
+    def _read_tcp(self) -> np.ndarray | None:
         if not self._socket or not self._connected:
             return None
         try:
@@ -98,22 +91,20 @@ class IMUClient:
             del self._rbuf[: idx + 1]
             if not line.strip():
                 return None
-            return json.loads(line.decode("utf-8"))  # type: ignore[no-any-return]
-        except (socket.timeout, json.JSONDecodeError, UnicodeDecodeError):
-            return None
-        except OSError:
-            self._connected = False
+            data = json.loads(line.decode("utf-8"))
+            if data.get("type") != "sample":
+                return None
+            return np.array([data.get(ch, 0.0) for ch in IMU_CHANNELS], dtype=np.float32)
+        except (socket.timeout, json.JSONDecodeError, UnicodeDecodeError, OSError):
             return None
 
-    def _read_serial(self) -> dict | None:
+    def _read_serial(self) -> np.ndarray | None:
         if not self._serial or not self._connected:
             return None
         try:
-            # Bulk-read all available bytes (non-blocking)
             n = self._serial.in_waiting
             if n > 0:
                 self._rbuf.extend(self._serial.read(n))
-            # If we have a complete line, extract it
             if b"\n" not in self._rbuf:
                 return None
             idx = self._rbuf.index(b"\n")
@@ -125,51 +116,41 @@ class IMUClient:
             m = _SAMPLE_RE.search(text)
             if m is None:
                 return None
-            return {
-                "type": "sample",
-                "timestamp": time.monotonic(),
-                "ax": float(m.group(1)), "ay": float(m.group(2)), "az": float(m.group(3)),
-                "gx": float(m.group(4)), "gy": float(m.group(5)), "gz": float(m.group(6)),
-            }
+            return np.array([float(m.group(i)) for i in range(1, 7)], dtype=np.float32)
         except (OSError, UnicodeDecodeError):
             return None
 
-    # ── Ingest ────────────────────────────────────────────────────────
+    # ── Buffered reading ─────────────────────────────────────────
 
     def ingest(self, max_samples: int = 200) -> int:
+        """Pull available samples into internal buffer."""
         added = 0
         for _ in range(max_samples):
-            data = self.read_sample()
-            if data is None:
+            sample = self.read_sample()
+            if sample is None:
                 if not self._connected:
                     break
                 continue
-            if data.get("type") != "sample":
-                continue
-            ts = data.get("timestamp", time.monotonic())
-            arr = np.array([data.get(ch, 0.0) for ch in IMU_CHANNELS], dtype=np.float32)
-            self._buffer.append((ts, arr))
-            self._sample_count += 1
+            self._buffer.append((time.monotonic(), sample))
             added += 1
         self._prune()
         return added
 
     def _prune(self) -> None:
-        cutoff = time.monotonic() - self.config.window_seconds * 2
+        cutoff = time.monotonic() - 6.0
         while self._buffer and self._buffer[0][0] < cutoff:
             self._buffer.popleft()
 
-    def get_window(self) -> np.ndarray:
-        timesteps = self.config.timesteps
+    def get_window(self, window_s: float = 2.0, timesteps: int = 100) -> np.ndarray:
+        """Return (timesteps, 6) array of recent data."""
         now = time.monotonic()
-        ws = self.config.window_seconds
-        data = [arr for ts, arr in self._buffer if now - ts <= ws]
+        data = [arr for ts, arr in self._buffer if now - ts <= window_s]
         if len(data) < 3:
-            return np.zeros((timesteps, self.config.channels), dtype=np.float32)
+            return np.zeros((timesteps, 6), dtype=np.float32)
         arr = np.array(data[-timesteps:], dtype=np.float32)
         if arr.shape[0] < timesteps:
-            padded = np.zeros((timesteps, self.config.channels), dtype=np.float32)
-            padded[-arr.shape[0] :] = arr
+            padded = np.zeros((timesteps, 6), dtype=np.float32)
+            padded[-arr.shape[0]:] = arr
             return padded
         return arr
 
@@ -190,7 +171,3 @@ class IMUClient:
     @property
     def connected(self) -> bool:
         return self._connected
-
-    @property
-    def sample_count(self) -> int:
-        return self._sample_count
