@@ -348,6 +348,10 @@ def print_analysis(analysis: dict) -> None:
         print(f"  left={dtw_dc.get('left', 0):.4f}  right={dtw_dc.get('right', 0):.4f}")
         if ax_hp_stats:
             print(f"  ax_hp: range={ax_hp_stats['range']:.3f} std={ax_hp_stats['std']:.3f} max={ax_hp_stats['max']:.3f} min={ax_hp_stats['min']:.3f}")
+
+    zcr = analysis.get("gyro_z_zcr")
+    gz_mean = analysis.get("gyro_z_mean")
+    if zcr is not None:
         print(f"\n── Motion Physics ──")
         print(f"  gyro_z ZCR: {zcr:.3f}  (high=oscillation/wave, low=rotation/circle)")
         print(f"  gyro_z mean: {gz_mean:+.3f} rad/s  (+CW, -ACW, ~0=wave)")
