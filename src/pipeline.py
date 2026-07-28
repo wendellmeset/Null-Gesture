@@ -187,7 +187,7 @@ class GesturePipeline:
         seg_frame_count = 0
         recording = False
         votes: dict[str, float] = {}
-        motion_det = MotionGestureDetector(window_samples=20)
+        motion_det = MotionGestureDetector(window_samples=50)
         amag_ema: float | None = None
 
         for frame in self._multiplexer:
@@ -217,7 +217,7 @@ class GesturePipeline:
                     recording = True
                     votes = {}
                     seg_frame_count = 0
-                    motion_det = MotionGestureDetector(window_samples=20)
+                    motion_det = MotionGestureDetector(window_samples=50)
                     _log.info("[MOTION] Started segment")
                 still_count = 0
                 seg_frame_count += 1
@@ -245,7 +245,7 @@ class GesturePipeline:
                                     confidence=min(1.0, conf),
                                     timestamp=time.time(), duration=0.0,
                                 )
-                        motion_det = MotionGestureDetector(window_samples=20)
+                        motion_det = MotionGestureDetector(window_samples=50)
 
             time.sleep(0.005)
 

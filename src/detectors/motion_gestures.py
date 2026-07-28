@@ -11,9 +11,7 @@ Uses three complementary methods:
 from __future__ import annotations
 
 import math
-import pickle
 from collections import deque
-from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
@@ -47,35 +45,6 @@ def _normalize_seq(seq: np.ndarray) -> np.ndarray:
         return seq - np.mean(seq)
     return (seq - np.mean(seq)) / std
 
-
-# ── DTW Templates ────────────────────────────────────────────────────────
-
-# Reference templates: normalized gyro_z trajectory for circles,
-# accel_x trajectory for left/right.
-# Values are approximate — can be replaced with recorded templates.
-
-
-def _default_templates() -> dict[str, np.ndarray]:
-    """Generate synthetic reference templates. Replace with recorded data."""
-    t = np.linspace(0, 2 * math.pi, 50)
-
-    return {
-        "clockwise": _normalize_seq(np.sin(t)),
-        "anti_clockwise": _normalize_seq(-np.sin(t)),
-        # Right-wrist mount, X toward fingers:
-        # +X accel (hand moves left) → positive hump → matches "left"
-        # -X accel (hand moves right) → negative hump → matches "right"
-        "left": _normalize_seq(np.concatenate([
-            np.linspace(0, 2, 20),
-            np.linspace(2, 0, 20),
-            np.zeros(10),
-        ])),
-        "right": _normalize_seq(np.concatenate([
-            np.linspace(0, -2, 20),
-            np.linspace(-2, 0, 20),
-            np.zeros(10),
-        ])),
-    }
 
 
 # ── HMM (Hidden Markov Model) ────────────────────────────────────────────
@@ -300,39 +269,17 @@ class MotionGestureDetector:
     def __init__(
         self,
         window_samples: int = 50,
-        dtw_weight: float = 0.4,
-        hmm_weight: float = 0.3,
-        rf_weight: float = 0.3,
-        rf_model_path: str | None = None,
     ) -> None:
         self._window = IMUWindow(window_samples)
-        self._dtw_weight = dtw_weight
-        self._hmm_weight = hmm_weight
-        self._rf_weight = rf_weight
 
-        # DTW templates
-        self._templates = _default_templates()
-
-        # HMMs (per gesture)
-        self._hmms: dict[str, SimpleHMM] = {}
-
-        # Random Forest
-        self._rf = MinimalRandomForest(n_trees=30, max_depth=8)
-        if rf_model_path and Path(rf_model_path).exists():
-            self._rf.load(rf_model_path)
-
-        # Observation accumulator for HMM
-        self._obs_buffer: deque[np.ndarray] = deque(maxlen=50)
-
-        # Simple feature names used by RF
-        self._feature_names: list[str] = []
+        # ── Adaptive baseline via rolling percentile ──────────────────
+        # 5th percentile over 500 samples (5s at 100Hz). A 2s gesture
+        # occupies at most 40% of history, so resting samples dominate.
+        self._gmag_history: deque[float] = deque(maxlen=500)
 
         # EMA state for sustained direction (survives window flips)
         self._gz_ema: float = 0.0
         self._gx_ema: float = 0.0
-
-        # Longer history for bye-bye ZCR (500ms at 100Hz = 50 samples)
-        self._bye_gz_history: deque[float] = deque(maxlen=50)
 
     def push(
         self,
@@ -340,15 +287,19 @@ class MotionGestureDetector:
         gx: float, gy: float, gz: float,
     ) -> None:
         self._window.push(ax, ay, az, gx, gy, gz)
-        self._bye_gz_history.append(gz)
+
+        # Record for baseline (no adaptation — pure history)
+        self._gmag_history.append(math.sqrt(gx * gx + gy * gy + gz * gz))
+
 
     def detect(self) -> dict[str, float]:
-        """Return belief masses for motion gestures using physics-informed rules.
+        """Return belief masses using adaptive, ratio-based, multi-axis features.
 
-        - CW/ACW: gyro_z mean sign + DTW on z-score-normalized sequences
-        - Left/Right: accel_x transient peak detection
-        - Bye-Bye: high ZCR on gyro_z (oscillation) + low |mean| (centered)
-        - Boxing: accel magnitude peaks
+        All thresholds are expressed as ratios of the adaptive baseline,
+        making detection robust across different users, speeds, and mounting.
+
+        Circle (CW/ACW): dominant-axis rotation that is steady and sustained.
+        Swipe (Left/Right): velocity pulse from integrated acceleration.
         """
         result: dict[str, float] = {g: 0.0 for g in self.GESTURES}
         result["unknown"] = 1.0
@@ -360,87 +311,120 @@ class MotionGestureDetector:
         if not features:
             return result
 
-        ax_seq = np.array(list(self._window._ax), dtype=np.float64)
-        ay_seq = np.array(list(self._window._ay), dtype=np.float64)
-        az_seq = np.array(list(self._window._az), dtype=np.float64)
-        gx_seq = np.array(list(self._window._gx), dtype=np.float64)
-        gy_seq = np.array(list(self._window._gy), dtype=np.float64)
-        gz_seq = np.array(list(self._window._gz), dtype=np.float64)
-        amag_seq = np.array(list(self._window._amag), dtype=np.float64)
+        ax = np.array(list(self._window._ax), dtype=np.float64)
+        ay = np.array(list(self._window._ay), dtype=np.float64)
+        az = np.array(list(self._window._az), dtype=np.float64)
+        gx = np.array(list(self._window._gx), dtype=np.float64)
+        gy = np.array(list(self._window._gy), dtype=np.float64)
+        gz = np.array(list(self._window._gz), dtype=np.float64)
+        amag = np.array(list(self._window._amag), dtype=np.float64)
 
-        gz_mean = float(np.mean(gz_seq))
-        gz_std = float(np.std(gz_seq))
-        gz_zcr = features.get("gz_zcr", 0.0)
-        ax_mean = float(np.mean(ax_seq))
-        ax_std = float(np.std(ax_seq))
-        ax_range = float(np.ptp(ax_seq))
 
-        # Update EMAs for sustained direction (α=0.15, ~7-window smoothing)
-        self._gz_ema = self._gz_ema * 0.85 + gz_mean * 0.15
-        self._gx_ema = self._gx_ema * 0.85 + float(np.mean(gx_seq)) * 0.15
+        # ── Gyro magnitude & axis analysis ────────────────────────────
+        gmag = np.sqrt(gx**2 + gy**2 + gz**2)
+        gmag_mean = float(np.mean(gmag))
+        gmag_std = float(np.std(gmag))
 
-        # ── Bye-Bye: disabled for IMU-only (requires UWB distance stability) ──
-        # The IMU cannot reliably distinguish a wave from lateral gestures
-        # or circles with speed variation. Enable when UWB is functional.
-        is_oscillation = False
+        # ── Adaptive baseline via 5th percentile of long history ─────
+        if len(self._gmag_history) >= 50:
+            bl_gmag = max(float(np.percentile(list(self._gmag_history), 5)), 5.0)
+        else:
+            bl_gmag = 12.0
+        # Accel noise floor: BMI270 resting noise ≈ 0.01-0.03 g RMS.
+        # Fixed value avoids gravity contamination of adaptive tracking.
+        bl_anoise = 0.02
 
-        # ── CW / ACW: constant rotation (only if NOT oscillating) ─────
-        circle_magnitude = abs(gz_mean)
-        is_circle_like = (not is_oscillation) and circle_magnitude > 0.4 and gz_zcr < 0.12
+        # ── Accel features for swipe detection ─────────────────────────
+        # Demean ax for velocity integration (removes DC offset)
+        ax_dm = ax - np.mean(ax)
 
+        # Integrate → velocity (cumulative sum, no attenuation)
+        vx = np.cumsum(ax_dm)
+        vx_range = float(np.ptp(vx))
+
+        # Swipe asymmetry from RAW ax (gravity on az, so ax is centered at 0)
+        ax_raw_min = float(np.min(ax))
+        ax_raw_max = float(np.max(ax))
+        ax_raw_range = ax_raw_max - ax_raw_min
+        ax_asymmetry = abs(ax_raw_max + ax_raw_min) / (ax_raw_range + 1e-6)
+        # ── Dominant rotation axis via RMS (mean=0 for sine waves) ──
+        gx_rms = float(np.sqrt(np.mean(gx**2)))
+        gy_rms = float(np.sqrt(np.mean(gy**2)))
+        gz_rms = float(np.sqrt(np.mean(gz**2)))
+        gmag_rms = float(np.sqrt(np.mean(gmag**2)))
+
+        g_rms = np.array([gx_rms, gy_rms, gz_rms])
+        dominant_idx = int(np.argmax(g_rms))
+        dominant_strength = float(g_rms[dominant_idx] / (gmag_rms + 1e-6))
+
+        # Gyro steadiness: 1.0 = constant speed, 0.0 = wildly variable
+        gyro_steadiness = 1.0 - min(gmag_std / (gmag_mean + 1e-6), 1.0)
+
+        # ── Update EMAs for direction persistence across windows ──────
+        dom_seq = [gx, gy, gz][dominant_idx]
+        dom_integral = float(np.sum(dom_seq))
+        self._gz_ema = self._gz_ema * 0.85 + float(np.sum(gz)) * 0.15
+        self._gx_ema = self._gx_ema * 0.85 + float(np.sum(gx)) * 0.15
+
+        # ═══════════════════════════════════════════════════════════════
+        # SOFT SCORING: both gesture families score independently.
+        # No mutual-exclusion gates — the evidence decides.
+        # ═══════════════════════════════════════════════════════════════
+
+        # ── Swipe evidence (accel-driven) ─────────────────────────────
+        vx_snr = vx_range / (bl_anoise * 20.0 + 1e-6)
+        swipe_mag = min(1.0, vx_snr / 6.0)          # accel strength
+        swipe_shape = ax_asymmetry                    # unidirectional pulse
+        swipe_evidence = swipe_mag * swipe_shape
+
+        # ── Circle evidence (gyro-driven) ─────────────────────────────
+        # How many multiples of baseline is the gyro?
+        gyro_elevation = max(0.0, min(1.0, (gmag_mean / max(bl_gmag, 1.0) - 1.5) / 3.0))
+        circle_evidence = gyro_elevation * dominant_strength * gyro_steadiness
+
+        # ── Direction assignment ──────────────────────────────────────
         cw_score = 0.0
         acw_score = 0.0
-        bye_score = 0.0
         left_score = 0.0
         right_score = 0.0
 
-        if is_oscillation:
-            bye_score = 0.0  # IMU-only bye-bye disabled
-
-        elif is_circle_like:
-            base = min(1.0, circle_magnitude / 1.5)
-            if self._gz_ema < 0:
+        # Circle direction: sign of integrated dominant axis
+        if circle_evidence > 0.05:
+            base = min(1.0, circle_evidence * 1.2)
+            # Standard wrist mount: CW → negative dominant integral
+            if dom_integral < 0:
                 cw_score = base
             else:
                 acw_score = base
-            gz_norm = _normalize_seq(gz_seq)
-            cw_tmpl = _normalize_seq(self._templates.get("clockwise", np.zeros(1)))
-            acw_tmpl = _normalize_seq(self._templates.get("anti_clockwise", np.zeros(1)))
-            if gz_std > 0.3:
-                if _dtw_distance(gz_norm, cw_tmpl) < _dtw_distance(gz_norm, acw_tmpl):
-                    cw_score = min(1.0, cw_score * 1.4)
-                    acw_score *= 0.4
-                else:
-                    acw_score = min(1.0, acw_score * 1.4)
-                    cw_score *= 0.4
-        else:
-            # ── Left / Right: accel transient + gyro_x direction ────
-            left_score = 0.0
-            right_score = 0.0
-            if len(ax_seq) >= 15:
-                ax_sma = np.convolve(ax_seq, np.ones(10)/10, mode='same')
-                ax_hp = ax_seq - ax_sma
-            else:
-                ax_hp = ax_seq
-            ax_hp_range = float(np.ptp(ax_hp))
-            ax_hp_std = float(np.std(ax_hp))
-            ax_hp_max = float(np.max(np.abs(ax_hp)))
-            if ax_hp_range > 0.15 and ax_hp_range > ax_hp_std * 1.8:
-                base = min(1.0, ax_hp_max / 0.8)
-                if self._gx_ema > 0.05:
-                    left_score = min(1.0, base * 1.3)
-                    right_score = base * 0.15
-                elif self._gx_ema < -0.05:
-                    right_score = min(1.0, base * 1.3)
-                    left_score = base * 0.15
-        # ── Boxing: accel magnitude peaks ─────────────────────────────
+            # Tilted-wrist penalty
+            if dominant_idx != 2:
+                cw_score *= 0.7
+                acw_score *= 0.7
+        # Swipe direction: gyro_x EMA (persistent) + vx trend (per-window)
+        if swipe_evidence > 0.05:
+            base = min(1.0, swipe_evidence * 1.2)
+            # Primary: gyro_x rotation direction (persistent across windows)
+            gx_dir = 1.0 if self._gx_ema > 0 else -1.0
+            # Secondary: net change in vx over the window
+            vx_dir = 1.0 if vx[-1] > vx[0] else -1.0
+            direction = gx_dir + vx_dir
+            if direction > 0:
+                left_score = base
+            elif direction < 0:
+                right_score = base
+
+        # ═══════════════════════════════════════════════════════════════
+        # BOXING DETECTION (unchanged logic, ratio-adapted thresholds)
+        # ═══════════════════════════════════════════════════════════════
         amag_peaks = features.get("amag_peak_count", 0.0)
         amag_std = features.get("amag_std", 0.0)
         amag_range = features.get("amag_range", 0.0)
 
         boxing_score = 0.0
-        if amag_peaks >= 1 and amag_std > 0.8:
-            boxing_score = min(1.0, (amag_peaks / 4.0) * (amag_range / 3.0))
+        # Boxing: repetitive acceleration spikes
+        # Use ratio of amag_std to baseline noise instead of absolute 0.8
+        if amag_peaks >= 1 and amag_std > bl_anoise * 40.0:
+            boxing_score = min(1.0, (amag_peaks / 4.0) * (amag_range / max(bl_anoise * 60.0, 0.5)))
 
         # ── Assemble ──────────────────────────────────────────────────
         combined = {
@@ -448,7 +432,7 @@ class MotionGestureDetector:
             "anti_clockwise": acw_score,
             "left": left_score,
             "right": right_score,
-            "bye_bye": bye_score,
+            "bye_bye": 0.0,  # IMU-only bye-bye disabled (needs UWB distance)
             "one_arm_boxing": boxing_score * 0.7,
             "two_arm_boxing": boxing_score * 0.5,
         }
