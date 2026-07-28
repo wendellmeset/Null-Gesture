@@ -57,7 +57,7 @@ class ProximityGestureDetector:
                 self._calibrated = True
 
     def detect(self) -> dict[str, float]:
-        """Return belief masses for Pull/Push + bye-bye (distance stability)."""
+        """Return belief masses for Pull/Push using UWB distance change."""
         result: dict[str, float] = {"pull": 0.0, "push": 0.0, "bye_bye": 0.0, "unknown": 1.0}
 
         if not self._uwb_window.full:
@@ -67,35 +67,29 @@ class ProximityGestureDetector:
         if not uwb_feats:
             return result
 
-        vel_mean = uwb_feats.get("uwb_velocity_mean", 0.0)
-        vel_consistency = uwb_feats.get("uwb_velocity_sign_consistency", 0.0)
+        dist_range = uwb_feats.get("uwb_distance_range", 0.0)
         dist_slope = uwb_feats.get("uwb_distance_slope", 0.0)
         dist_mean = uwb_feats.get("uwb_distance_mean", 0.0)
         dist_std = uwb_feats.get("uwb_distance_std", 0.0)
 
-        # ── Bye-Bye: stable distance (hand stays at consistent range) ──
+        # ── Bye-Bye: stable distance ──
         bye_score = 0.0
         if dist_mean > 0.05 and dist_std > 0.001:
-            cv = dist_std / dist_mean  # coefficient of variation
-            # Low CV = distance isn't changing much (waving, not pushing/pulling)
+            cv = dist_std / dist_mean
             if cv < 0.15 and dist_std < 0.15:
                 bye_score = min(1.0, (1.0 - cv / 0.15) * 1.5)
 
-        # ── Pull detection ──────────────────────────────────────────
+        # ── Pull / Push: distance range > 3cm + consistent slope ──
         pull_score = 0.0
-        if vel_mean < self._pull_thresh and vel_consistency > 0.6:
-            velocity_ratio = abs(vel_mean) / abs(self._pull_thresh)
-            pull_score = min(1.0, velocity_ratio * vel_consistency)
-            if dist_slope < 0:
-                pull_score = min(1.0, pull_score * 1.3)
-
-        # ── Push detection ──────────────────────────────────────────
         push_score = 0.0
-        if vel_mean > self._push_thresh and vel_consistency > 0.6:
-            velocity_ratio = vel_mean / self._push_thresh
-            push_score = min(1.0, velocity_ratio * vel_consistency)
-            if dist_slope > 0:
-                push_score = min(1.0, push_score * 1.3)
+        if dist_range > 0.03:  # 3cm minimum change
+            base = min(1.0, dist_range / 0.15)  # scale to 1.0 at 15cm
+            if dist_slope < -0.0005:  # distance decreasing → pull
+                pull_score = base
+                push_score = base * 0.1
+            elif dist_slope > 0.0005:  # distance increasing → push
+                push_score = base
+                pull_score = base * 0.1
 
         # IMU confirmation
         if self._imu_window.full:

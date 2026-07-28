@@ -234,16 +234,24 @@ def main() -> None:
         print("WARNING: Calibration timed out — detection may be less accurate.")
     else:
         print("Calibration complete.")
-    print("Detecting gestures... Press Ctrl+C to stop.\n")
+    print("Waiting for motion... (Ctrl+C to stop)\n")
 
-    # ── Run ─────────────────────────────────────────────────────────
-    display = GestureDisplay(json_output=args.json)
 
     try:
         for event in pipeline.events():
             if not running:
                 break
-            display.show(event)
+            # Single event per segment — just print the detected gesture
+            if args.json:
+                print(json.dumps({
+                    "gesture": event.gesture,
+                    "confidence": round(event.confidence, 4),
+                    "timestamp": event.timestamp,
+                }))
+            else:
+                bar = "█" * int(event.confidence * 20)
+                print(f"  {event.gesture.upper():20s} [{bar:20s}] {event.confidence:.3f}")
+            sys.stdout.flush()
     except KeyboardInterrupt:
         pass
     finally:

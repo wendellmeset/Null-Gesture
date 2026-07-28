@@ -177,130 +177,80 @@ class GesturePipeline:
     # ── Event stream ─────────────────────────────────────────────────────
 
     def events(self) -> Iterator[GestureEvent]:
-        """Generator yielding GestureEvent objects in real time.
-
-        Yields only when a gesture starts, remains active, or ends.
-        """
+        """Segment-then-classify: IMU motion gate, vote accumulation, majority-wins."""
         if not self._running:
             self.start()
+
+        STILL_FRAMES = 15
+        MIN_SEG_FRAMES = 30
+        still_count = 0
+        seg_frame_count = 0
+        recording = False
+        votes: dict[str, float] = {}
+        motion_det = MotionGestureDetector(window_samples=20)
+        amag_ema: float | None = None
 
         for frame in self._multiplexer:
             if not self._running:
                 break
-
             self._frame_count += 1
-            event = self._process_frame(frame)
-            if event is not None:
-                yield event
 
-    def run_with_callback(self, callback) -> None:
-        """Run pipeline, calling callback(event) for each detected gesture."""
-        for event in self.events():
-            callback(event)
+            pf = self._preprocessor.process(frame)
 
-    # ── Frame processing ─────────────────────────────────────────────────
+            # Compute IMU motion gate
+            if pf.imu_gyro and pf.imu_linear_accel:
+                gx, gy, gz = pf.imu_gyro
+                ax, ay, az = pf.imu_linear_accel
+                motion_det.push(ax, ay, az, gx, gy, gz)
+                amag = math.sqrt(ax**2 + ay**2 + az**2)
+                gmag = math.sqrt(gx**2 + gy**2 + gz**2)
+                if amag_ema is None:
+                    amag_ema = amag
+                else:
+                    amag_ema = amag_ema * 0.95 + amag * 0.05
+                moving = gmag > 0.3 or abs(amag - amag_ema) > 0.25
+            else:
+                moving = False
 
-    def _process_frame(self, raw_frame) -> GestureEvent | None:
-        # 1. Preprocess
-        pf = self._preprocessor.process(raw_frame)
+            if moving:
+                if not recording:
+                    recording = True
+                    votes = {}
+                    seg_frame_count = 0
+                    motion_det = MotionGestureDetector(window_samples=20)
+                    _log.info("[MOTION] Started segment")
+                still_count = 0
+                seg_frame_count += 1
 
-        # 2. Push to detectors (always — keeps windows current)
-        self._push_to_detectors(pf)
+                r = motion_det.detect()
+                best = max(r, key=r.get)
+                if best != "unknown" and r.get("unknown", 1.0) < 0.9:
+                    votes[best] = votes.get(best, 0) + r[best]
+                    _log.info("  imu: %s=%.3f", best, r[best])
+            else:
+                if recording:
+                    still_count += 1
+                    if still_count >= STILL_FRAMES and seg_frame_count >= MIN_SEG_FRAMES:
+                        recording = False
+                        _log.info("[MOTION] Ended. frames=%d votes=%s",
+                                  seg_frame_count,
+                                  {k: round(v, 2) for k, v in votes.items()})
+                        if votes:
+                            best = max(votes, key=votes.get)
+                            total = sum(votes.values())
+                            conf = votes[best] / total if total > 0 else 0
+                            if conf > 0.25:
+                                yield GestureEvent(
+                                    gesture=best, phase="end",
+                                    confidence=min(1.0, conf),
+                                    timestamp=time.time(), duration=0.0,
+                                )
+                        motion_det = MotionGestureDetector(window_samples=20)
 
-        # ── Motion gate: skip fusion if IMU is still ────────────────
-        if pf.imu_gyro is not None:
-            gmag = math.sqrt(pf.imu_gyro[0]**2 + pf.imu_gyro[1]**2 + pf.imu_gyro[2]**2)
-            amag = math.sqrt(
-                (pf.imu_linear_accel[0] if pf.imu_linear_accel else 0)**2 +
-                (pf.imu_linear_accel[1] if pf.imu_linear_accel else 0)**2 +
-                (pf.imu_linear_accel[2] if pf.imu_linear_accel else 0)**2
-            ) if pf.imu_linear_accel else 0
-            if gmag < 0.3 and amag < 0.15:
-                return None
-
-        # 3. Collect evidence from each detector
-        evidence_collected = 0
-
-        # Motion (IMU)
-        motion_result = self._motion_detector.detect()
-        if motion_result.get("unknown", 1.0) < 0.95:
-            self._fusion.add_evidence("motion", motion_result)
-            evidence_collected += 1
-
-        # Posture (mmWave + RFID)
-        posture_result = self._posture_detector.detect()
-        if posture_result.get("unknown", 1.0) < 0.95:
-            self._fusion.add_evidence("posture", posture_result)
-            evidence_collected += 1
-
-        # Micro-Doppler (Soli)
-        doppler_result = self._doppler_detector.detect()
-        if doppler_result.get("unknown", 1.0) < 0.95:
-            self._fusion.add_evidence("micro_doppler", doppler_result)
-            evidence_collected += 1
-
-        # Proximity (UWB + IMU)
-        proximity_result = self._proximity_detector.detect()
-        if proximity_result.get("unknown", 1.0) < 0.95:
-            self._fusion.add_evidence("proximity", proximity_result)
-            evidence_collected += 1
-
-        # Hand gestures (mmWave + IMU)
-        hand_result = self._hand_detector.detect()
-        if hand_result.get("unknown", 1.0) < 0.95:
-            self._fusion.add_evidence("hand", hand_result)
-            evidence_collected += 1
-
-        # ── Cross-detector gate: bye-bye requires UWB distance stability ──
-        # Only gate when proximity has an opinion (UWB data is flowing).
-        # If proximity is all-unknown (no UWB data), don't suppress motion.
-        proximity_has_opinion = proximity_result.get("unknown", 1.0) < 0.9
-        if motion_result.get("bye_bye", 0) > 0.3 and proximity_has_opinion:
-            proximity_bye = proximity_result.get("bye_bye", 0)
-            if proximity_bye < 0.1:
-                suppressed = motion_result.get("bye_bye", 0)
-                motion_result["bye_bye"] = 0.0
-                motion_result["unknown"] = min(1.0, motion_result.get("unknown", 0) + suppressed)
-
-        if evidence_collected == 0:
-            self._fusion.reset()
-            return None
-
-        # 4. Fuse evidence
-        fused = self._fusion.fuse()
-
-        # 5. Temporal filtering
-        event = self._temporal.update(fused)
-
-        # Logging
-        if self._verbose and event is not None and event.phase in ("start", "end"):
-            _log.info(
-                "[%s] %s (conf=%.2f, dur=%.2fs, sensors=%s)",
-                event.phase.upper(),
-                event.gesture,
-                event.confidence,
-                event.duration,
-                event.contributing_sensors,
-            )
-
-        return event
+            time.sleep(0.005)
 
     def _push_to_detectors(self, pf: PreprocessedFrame) -> None:
         """Push preprocessed data into all detectors."""
-
-        # Motion detector (IMU)
-        if pf.imu_gyro is not None:
-            gx, gy, gz = pf.imu_gyro
-            ax, ay, az = pf.imu_linear_accel or (0.0, 0.0, 0.0)
-            self._motion_detector.push(ax, ay, az, gx, gy, gz)
-
-        # mmWave-dependent detectors
-        clusters = pf.mmwave_clusters or []
-        velocities = pf.mmwave_raw_velocities
-        rfid_hands = pf.rfid_hands or set()
-
-        self._posture_detector.push(clusters, velocities, rfid_hands)
-        self._doppler_detector.push(clusters, velocities)
 
         # Proximity detector (UWB + IMU)
         imu_ax, imu_ay, imu_az = pf.imu_linear_accel or (None, None, None)

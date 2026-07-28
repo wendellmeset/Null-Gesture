@@ -224,36 +224,13 @@ class SensorMultiplexer:
         status: dict[str, bool] = {}
         self._running = False
 
-        # ── UWB (auto-detect nRF52 boards) ──────────────────────────
-        initiator = self._uwb_initiator
-        responder = self._uwb_responder
-        if not initiator or not responder:
-            uwb_ports = self._find_uwb_ports()
-            if len(uwb_ports) >= 2:
-                if not initiator:
-                    initiator = uwb_ports[1]  # second nRF52 = initiator
-                if not responder:
-                    responder = uwb_ports[0]  # first nRF52 = responder
-
-        if initiator and responder:
-            try:
-                uwb = UWBReader()
-                if uwb.connect(initiator=initiator, responder=responder):
-                    self._readers["uwb"] = uwb
-                    self._buffers["uwb"] = RingBuffer(self._buffer_capacity)
-                    self._threads["uwb"] = threading.Thread(
-                        target=self._uwb_worker, name="uwb-reader", daemon=True
-                    )
-                    status["uwb"] = True
-                else:
-                    status["uwb"] = False
-            except Exception:
-                status["uwb"] = False
+        # ── UWB: DISABLED — unreliable 655.35m glitches make it unusable ──
+        status["uwb"] = False
 
         # ── IMU (auto-detect by probing all non-UWB ports) ──────────
         imu_port = self._imu_port
         if not imu_port:
-            claimed = {initiator, responder}
+            claimed: set[str] = set()
             all_ports = self._list_usb_ports()
             # Prefer /dev/ttyACM* for IMU (ESP32 typically on ACM)
             candidates = sorted(
@@ -283,7 +260,7 @@ class SensorMultiplexer:
         # ── mmWave (auto-detect by probing all non-claimed ports) ────
         mmwave_port = self._mmwave_port
         if not mmwave_port:
-            claimed = {initiator, responder, imu_port}
+            claimed = {imu_port} if imu_port else set()
             all_ports = self._list_usb_ports()
             # Prefer /dev/ttyUSB* for mmWave (radar typically on USB-UART)
             candidates = sorted(

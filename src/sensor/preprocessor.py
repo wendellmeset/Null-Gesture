@@ -267,6 +267,8 @@ class SensorPreprocessor:
         # UWB processing
         if frame.uwb is not None:
             pf.uwb_distance, pf.uwb_velocity = self._process_uwb(frame.uwb)
+        elif self._uwb_prev_dist is not None:
+            pf.uwb_distance = self._uwb_prev_dist  # hold last valid distance
 
         # RFID processing
         if frame.rfid is not None:

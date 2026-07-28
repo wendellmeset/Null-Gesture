@@ -288,8 +288,6 @@ class MotionGestureDetector:
     """
 
     GESTURES: ClassVar[list[str]] = [
-        "pull",
-        "push",
         "clockwise",
         "anti_clockwise",
         "left",
@@ -393,8 +391,6 @@ class MotionGestureDetector:
         cw_score = 0.0
         acw_score = 0.0
         bye_score = 0.0
-        pull_score = 0.0
-        push_score = 0.0
         left_score = 0.0
         right_score = 0.0
 
@@ -418,21 +414,6 @@ class MotionGestureDetector:
                     acw_score = min(1.0, acw_score * 1.4)
                     cw_score *= 0.4
         else:
-            # ── Pull / Push: strong linear accel, no rotation ────────
-            pull_score = 0.0
-            push_score = 0.0
-            amag_seq_dc = amag_seq - np.mean(amag_seq)  # DC-block accel magnitude
-            amag_range_dc = float(np.ptp(amag_seq_dc))
-            amag_std_dc = float(np.std(amag_seq_dc))
-            if amag_range_dc > 0.25 and amag_range_dc > amag_std_dc * 2.0:
-                base = min(1.0, amag_range_dc / 1.5)
-                # Direction: use az sign (forward/back in typical mount)
-                az_mean = float(np.mean(az_seq))
-                if az_mean < -0.15:
-                    pull_score = min(1.0, base * 1.3)
-                elif az_mean > 0.15:
-                    push_score = min(1.0, base * 1.3)
-
             # ── Left / Right: accel transient + gyro_x direction ────
             left_score = 0.0
             right_score = 0.0
@@ -463,8 +444,6 @@ class MotionGestureDetector:
 
         # ── Assemble ──────────────────────────────────────────────────
         combined = {
-            "pull": pull_score,
-            "push": push_score,
             "clockwise": cw_score,
             "anti_clockwise": acw_score,
             "left": left_score,
@@ -473,7 +452,6 @@ class MotionGestureDetector:
             "one_arm_boxing": boxing_score * 0.7,
             "two_arm_boxing": boxing_score * 0.5,
         }
-
         total = sum(combined.values())
         if total > 0.9:
             scale = 0.9 / total
