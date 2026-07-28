@@ -406,13 +406,13 @@ class MotionGestureDetector:
             gz_norm = _normalize_seq(gz_seq)
             cw_tmpl = _normalize_seq(self._templates.get("clockwise", np.zeros(1)))
             acw_tmpl = _normalize_seq(self._templates.get("anti_clockwise", np.zeros(1)))
-            if _dtw_distance(gz_norm, cw_tmpl) < _dtw_distance(gz_norm, acw_tmpl):
-                cw_score = min(1.0, cw_score * 1.4)
-                acw_score *= 0.4
-            else:
-                acw_score = min(1.0, acw_score * 1.4)
-                cw_score *= 0.4
-
+            if gz_std > 0.3:
+                if _dtw_distance(gz_norm, cw_tmpl) < _dtw_distance(gz_norm, acw_tmpl):
+                    cw_score = min(1.0, cw_score * 1.4)
+                    acw_score *= 0.4
+                else:
+                    acw_score = min(1.0, acw_score * 1.4)
+                    cw_score *= 0.4
         else:
             # ── Left / Right: accel transient + gyro_x direction ────
             if len(ax_seq) >= 15:
@@ -452,10 +452,13 @@ class MotionGestureDetector:
         }
 
         total = sum(combined.values())
-        if total > 0:
+        if total > 0.9:
             scale = 0.9 / total
             for g in self.GESTURES:
                 result[g] = combined[g] * scale
-            result["unknown"] = 1.0 - sum(result[g] for g in self.GESTURES)
+        else:
+            for g in self.GESTURES:
+                result[g] = combined[g]
+        result["unknown"] = 1.0 - sum(result[g] for g in self.GESTURES)
 
         return result
