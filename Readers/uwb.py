@@ -1,50 +1,87 @@
-"""UWB Reader: DWM3001CDK FiRa TWR ranging via direct serial.
+"""UWB Reader: DWM3001CDK FiRa TWR ranging via Qorvo UCI subprocess.
 
-Requires two DWM3001CDK boards connected over USB (Responder + Initiator).
-Uses the native AT-style firmware interface — no Qorvo UCI library needed.
+Launches run_fira_twr.py from uwb-qorvo-tools as a controller/controlee
+pair and parses distance measurements from stdout.
 
 Usage::
 
     from Readers import UWBReader
 
     uwb = UWBReader()
-    uwb.connect(port="/dev/ttyACM0")     # single board mode
-    dist = uwb.read()                    # {'distance_m': 1.23, 'addr': '...'}
-    uwb.disconnect()
-
-Dual-board mode (Initiator + Responder)::
-
-    uwb = UWBReader()
-    uwb.connect(
-        initiator="/dev/ttyACM1",
-        responder="/dev/ttyACM0",
-    )
-    for sample in uwb:
+    uwb.connect(initiator="/dev/ttyACM1", responder="/dev/ttyACM0")
+    for sample in uwb.stream():
         print(f"{sample['distance_m']:.2f} m")
+    uwb.disconnect()
 """
 
 from __future__ import annotations
 
-import json
 import logging
+import os
 import re
+import subprocess
+import sys
+import threading
 import time
+from collections import deque
 from collections.abc import Iterator
+from pathlib import Path
 
 _log = logging.getLogger(__name__)
 
-_JSON_RE = re.compile(r"\[\s*\{.*?\}\s*\]", re.DOTALL)
-_BAUD = 115200
+# ── Paths ───────────────────────────────────────────────────────────────────
+_TOOLS_DIR = Path(__file__).resolve().parent / "uwb-qorvo-tools"
+_TWR_SCRIPT = _TOOLS_DIR / "scripts" / "fira" / "run_fira_twr" / "run_fira_twr.py"
 
-# Default native firmware commands
-_CMD_RESPONDER = "RESPF 9 2400 200 25 2 42 01:02:03:04:05:06:07:08 2 0 0 1"
-_CMD_INITIATOR = "INITF 9 2400 200 25 2 42 01:02:03:04:05:06:07:08 1 0 0 1 2"
+# ── Output parser regex ─────────────────────────────────────────────────────
+_SEQUENCE_RE = re.compile(r"sequence\s+n?:\s+(\d+)")
+_DISTANCE_RE = re.compile(r"distance:\s+([\d.]+)\s+cm")
+_STATUS_RE = re.compile(r"status:\s+(\w+)")
+
+# ── Default FiRa parameters ─────────────────────────────────────────────────
+DEFAULT_PREAMBLE = 10
+DEFAULT_CHANNEL = 9
+DEFAULT_SLOT_SPAN = 2400
+DEFAULT_SLOTS_PER_RR = 6
+DEFAULT_SAMPLE_RATE = 50  # Hz
+
+
+def _build_env() -> dict[str, str]:
+    """Build environment with UWB tools on PYTHONPATH."""
+    env = os.environ.copy()
+    paths = [
+        str(_TOOLS_DIR / "lib" / "uwb-uci"),
+        str(_TOOLS_DIR / "lib" / "uqt-utils"),
+        str(_TOOLS_DIR),
+    ]
+    existing = env.get("PYTHONPATH", "")
+    if existing:
+        paths.append(existing)
+    env["PYTHONPATH"] = os.pathsep.join(paths)
+    env["UWB_TOOLS"] = str(_TOOLS_DIR)
+    return env
+
+
+def _find_python() -> str:
+    """Find a Python that can import uci (conda env or system)."""
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        candidate = os.path.join(conda_prefix, "bin", "python")
+        if os.path.isfile(candidate):
+            return candidate
+    for base in [os.path.expanduser("~/.conda/envs"), os.path.expanduser("~/miniconda3/envs")]:
+        if os.path.isdir(base):
+            for name in os.listdir(base):
+                py = os.path.join(base, name, "bin", "python")
+                if os.path.isfile(py):
+                    return py
+    return sys.executable
 
 
 class UWBReader:
-    """Minimal DWM3001CDK UWB ranging reader.
+    """Minimal DWM3001CDK UWB ranging reader via Qorvo UCI subprocess.
 
-    Supports single-board (passive listen) and dual-board (active ranging) modes.
+    Provides the standard Readers interface: connect / read / stream / disconnect.
     """
 
     def __init__(
@@ -52,170 +89,220 @@ class UWBReader:
         port: str | None = None,
         initiator_port: str | None = None,
         responder_port: str | None = None,
-    ):
-        """
-        Args:
-            port: Single port for passive listening (reads whatever the board emits).
-            initiator_port: Initiator board port (sends INITF).
-            responder_port: Responder board port (sends RESPF).
-                If both are provided, dual-board active ranging is used.
-        """
+        preamble_code: int = DEFAULT_PREAMBLE,
+        channel: int = DEFAULT_CHANNEL,
+        sample_rate_hz: int = DEFAULT_SAMPLE_RATE,
+    ) -> None:
         self._port = port
         self._initiator_port = initiator_port
         self._responder_port = responder_port
-        self._ser = None
-        self._ser_initiator = None
-        self._ser_responder = None
+        self._preamble = preamble_code
+        self._channel = channel
+        self._sample_rate = sample_rate_hz
+
         self._connected = False
-        self._last_sample: dict | None = None
         self._running = False
+        self._last_sample: dict | None = None
+        self._samples: deque[dict] = deque(maxlen=2000)
+
+        self._controller_proc: subprocess.Popen | None = None
+        self._controlee_proc: subprocess.Popen | None = None
+        self._reader_thread: threading.Thread | None = None
+        self._sample_count = 0
+        self._env = _build_env()
 
     # ── Connection ───────────────────────────────────────────────────────
 
-    def connect(self) -> bool:
-        """Open serial connection(s) and start ranging."""
+    def connect(self, **kwargs) -> bool:
+        """Start FiRa TWR session.
+
+        Accepts keyword overrides: initiator=, responder=, port=.
+        For single-board mode, pass port=.
+        For dual-board mode, pass initiator= and responder=.
+        If no ports given, uses values from constructor.
+        """
+        initiator = kwargs.get("initiator") or self._initiator_port
+        responder = kwargs.get("responder") or self._responder_port
+        single = kwargs.get("port") or self._port
+
+        if single:
+            # Single-board mode not supported by run_fira_twr — need two boards
+            _log.error("Single-board UWB mode not supported. Use initiator + responder.")
+            return False
+
+        if not initiator or not responder:
+            _log.error("UWB requires initiator_port and responder_port.")
+            return False
+
+        if not _TWR_SCRIPT.exists():
+            _log.error("UWB tools not found at %s", _TWR_SCRIPT)
+            return False
+
+        python = _find_python()
+        ranging_span_ms = max(1, int(round(1000.0 / self._sample_rate)))
+        controlee_duration = 3700  # ~1 hour for indefinite streaming
+
+        common = [
+            python, "-u", str(_TWR_SCRIPT),
+            "--channel", str(self._channel),
+            "--preamble-idx", str(self._preamble),
+            "--aoa-report", "all-disabled",
+            "--slot-span", str(DEFAULT_SLOT_SPAN),
+            "--slots-per-rr", str(DEFAULT_SLOTS_PER_RR),
+            "--ranging-span", str(ranging_span_ms),
+            "--stats",
+        ]
+
+        controlee_cmd = common + ["-p", responder, "-t", str(controlee_duration), "--controlee"]
+        controller_cmd = common + ["-p", initiator, "-t", str(controlee_duration)]
+
+        # Start controlee first
         try:
-            import serial
-        except ImportError:
-            raise ImportError("pyserial is required: pip install pyserial")
+            self._controlee_proc = subprocess.Popen(
+                controlee_cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=self._env,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            _log.error("Failed to start UWB controlee: %s", exc)
+            return False
 
-        # Dual-board mode
-        if self._initiator_port and self._responder_port:
-            return self._connect_dual(serial)
+        time.sleep(3.0)  # Startup delay for controlee
 
-        # Single-board mode
-        if self._port:
-            return self._connect_single(serial)
-
-        raise ValueError("Provide port= or initiator_port + responder_port.")
-
-    def _connect_single(self, serial) -> bool:
-        self._ser = serial.Serial(self._port, _BAUD, timeout=0.2)
-        time.sleep(0.5)
-        self._ser.reset_input_buffer()
-        self._connected = True
-        return True
-
-    def _connect_dual(self, serial) -> bool:
-        self._ser_responder = serial.Serial(self._responder_port, _BAUD, timeout=0.2)
-        self._ser_initiator = serial.Serial(self._initiator_port, _BAUD, timeout=0.2)
-
-        # Configure responder
-        time.sleep(1.0)
-        self._ser_responder.reset_input_buffer()
-        self._ser_responder.write(b"\r\n")
-        time.sleep(0.3)
-        self._ser_responder.write(b"quit\r\n")
-        time.sleep(0.3)
-        self._ser_responder.reset_input_buffer()
-        self._ser_responder.write(f"{_CMD_RESPONDER}\r\n".encode())
-        time.sleep(0.5)
-
-        # Configure initiator
-        self._ser_initiator.reset_input_buffer()
-        self._ser_initiator.write(b"\r\n")
-        time.sleep(0.3)
-        self._ser_initiator.write(b"quit\r\n")
-        time.sleep(0.3)
-        self._ser_initiator.reset_input_buffer()
-        self._ser_initiator.write(f"{_CMD_INITIATOR}\r\n".encode())
-        time.sleep(0.5)
+        # Start controller (capture stdout)
+        try:
+            self._controller_proc = subprocess.Popen(
+                controller_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                env=self._env,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            _log.error("Failed to start UWB controller: %s", exc)
+            self._stop_controlee()
+            return False
 
         self._connected = True
+        self._running = True
+        self._reader_thread = threading.Thread(
+            target=self._read_loop,
+            name="uwb-reader",
+            daemon=True,
+        )
+        self._reader_thread.start()
         return True
 
     def disconnect(self) -> None:
-        """Close all serial connections."""
+        """Stop ranging and clean up subprocesses."""
+        self._running = False
         self._connected = False
-        for s in [self._ser, self._ser_initiator, self._ser_responder]:
-            if s:
+
+        for proc in [self._controller_proc, self._controlee_proc]:
+            if proc:
                 try:
-                    s.close()
-                except OSError:
-                    _log.warning("Failed to close serial port", exc_info=True)
-        self._ser = self._ser_initiator = self._ser_responder = None
+                    proc.terminate()
+                    proc.wait(timeout=3)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+
+        self._controller_proc = None
+        self._controlee_proc = None
+
+        if self._reader_thread and self._reader_thread.is_alive():
+            self._reader_thread.join(timeout=2)
+        self._reader_thread = None
 
     # ── Reading ──────────────────────────────────────────────────────────
 
     def read(self) -> dict | None:
-        """Read one distance sample.
-
-        Returns ``{'distance_m': float, 'addr': str}`` or None.
-        """
-        if not self._connected:
-            return None
-
-        # Dual-board: read from initiator
-        ser = self._ser_initiator or self._ser
-        if ser is None:
-            return None
-
-        try:
-            raw = b""
-            deadline = time.monotonic() + 2.0
-            while time.monotonic() < deadline:
-                chunk = ser.read(ser.in_waiting or 1)
-                if not chunk:
-                    continue
-                raw += chunk
-                m = _JSON_RE.search(raw.decode("utf-8", errors="ignore"))
-                if m:
-                    data = json.loads(m.group(0))
-                    for node in data:
-                        dist_cm = node.get("D_cm")
-                        if dist_cm is not None:
-                            sample = {
-                                "distance_m": dist_cm / 100.0,
-                                "addr": node.get("Addr", "unknown"),
-                            }
-                            self._last_sample = sample
-                            return sample
-        except OSError:
-            _log.warning("Serial read error", exc_info=True)
-        return None
+        """Return the latest distance sample, or None."""
+        if self._samples:
+            self._last_sample = self._samples[-1]
+            return self._last_sample
+        return self._last_sample
 
     def stream(self) -> Iterator[dict]:
-        """Generator yielding distance samples continuously."""
-        if not self._connected:
-            return
-        self._running = True
-        buf = ""
-        ser = self._ser_initiator or self._ser
-        if ser is None:
-            return
-
-        try:
-            while self._running and self._connected:
-                chunk = ser.read(ser.in_waiting or 1).decode("utf-8", errors="ignore")
-                if not chunk:
-                    time.sleep(0.01)
-                    continue
-                buf += chunk
-                # Keep buffer bounded
-                if len(buf) > 4096:
-                    buf = buf[-2048:]
-
-                m = _JSON_RE.search(buf)
-                if m:
-                    try:
-                        data = json.loads(m.group(0))
-                        for node in data:
-                            dist_cm = node.get("D_cm")
-                            if dist_cm is not None:
-                                sample = {
-                                    "distance_m": dist_cm / 100.0,
-                                    "addr": node.get("Addr", "unknown"),
-                                }
-                                self._last_sample = sample
-                                yield sample
-                    except json.JSONDecodeError:
-                        pass
-                    buf = buf[m.end():]
-        finally:
-            self._running = False
+        """Generator yielding distance samples as they arrive."""
+        idx = 0
+        while self._running or self._samples:
+            while idx < len(self._samples):
+                yield self._samples[idx]
+                idx += 1
+            if not self._running:
+                break
+            time.sleep(0.005)
 
     def __iter__(self) -> Iterator[dict]:
         return self.stream()
+
+    # ── Internals ────────────────────────────────────────────────────────
+
+    def _read_loop(self) -> None:
+        """Read and parse distance measurements from controller stdout."""
+        assert self._controller_proc is not None
+        assert self._controller_proc.stdout is not None
+
+        current_dist: float | None = None
+        current_status: str | None = None
+        current_seq: int = -1
+
+        try:
+            for line in self._controller_proc.stdout:
+                if not self._running:
+                    break
+
+                sm = _SEQUENCE_RE.search(line)
+                if sm:
+                    current_seq = int(sm.group(1))
+
+                dm = _DISTANCE_RE.search(line)
+                if dm:
+                    current_dist = float(dm.group(1))
+
+                stm = _STATUS_RE.search(line)
+                if stm:
+                    current_status = stm.group(1)
+
+                if current_dist is not None and current_status is not None:
+                    sample = {
+                        "distance_m": current_dist / 100.0,
+                        "distance_cm": current_dist,
+                        "addr": f"seq_{current_seq}",
+                        "status": current_status,
+                        "timestamp": time.time(),
+                    }
+                    self._samples.append(sample)
+                    self._last_sample = sample
+                    self._sample_count += 1
+                    current_dist = None
+                    current_status = None
+
+        except (OSError, ValueError) as exc:
+            _log.error("UWB read error: %s", exc)
+        finally:
+            self._running = False
+
+    def _stop_controlee(self) -> None:
+        if self._controlee_proc:
+            try:
+                self._controlee_proc.terminate()
+                self._controlee_proc.wait(timeout=3)
+            except Exception:
+                try:
+                    self._controlee_proc.kill()
+                except Exception:
+                    pass
+            self._controlee_proc = None
+
+    # ── Properties ───────────────────────────────────────────────────────
 
     @property
     def connected(self) -> bool:
@@ -224,3 +311,7 @@ class UWBReader:
     @property
     def last_sample(self) -> dict | None:
         return self._last_sample
+
+    @property
+    def sample_count(self) -> int:
+        return self._sample_count

@@ -237,8 +237,8 @@ class SensorMultiplexer:
 
         if initiator and responder:
             try:
-                uwb = UWBReader(initiator_port=initiator, responder_port=responder)
-                if uwb.connect():
+                uwb = UWBReader()
+                if uwb.connect(initiator=initiator, responder=responder):
                     self._readers["uwb"] = uwb
                     self._buffers["uwb"] = RingBuffer(self._buffer_capacity)
                     self._threads["uwb"] = threading.Thread(
