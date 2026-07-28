@@ -255,16 +255,32 @@ def diagnose_gesture(
         top3 = sorted(beliefs.items(), key=lambda x: x[1], reverse=True)[:3]
         analysis["top3_beliefs"] = top3
 
-    # Motion detector internals — DTW on normalized sequences
+    # Motion detector internals — what the detector actually sees
     if len(raw_imu_gyro_z) >= 30:
         gz_norm = _normalize_seq(np.array(raw_imu_gyro_z[-30:]))
-        ax_norm = _normalize_seq(np.array(raw_imu_accel_x[-30:]))
-        analysis["dtw_debug"] = {
-            "cw_distance": _dtw_distance(gz_norm, _normalize_seq(motion._templates.get("clockwise", np.zeros(1)))),
-            "acw_distance": _dtw_distance(gz_norm, _normalize_seq(motion._templates.get("anti_clockwise", np.zeros(1)))),
-            "left_distance": _dtw_distance(ax_norm, _normalize_seq(motion._templates.get("left", np.zeros(1)))),
-            "right_distance": _dtw_distance(ax_norm, _normalize_seq(motion._templates.get("right", np.zeros(1)))),
+        ax_raw = np.array(raw_imu_accel_x[-30:])
+        ax_norm = _normalize_seq(ax_raw)
+        # Raw-signal DTW (what diagnose traditionally shows)
+        analysis["dtw_raw"] = {
+            "cw": _dtw_distance(gz_norm, _normalize_seq(motion._templates.get("clockwise", np.zeros(1)))),
+            "acw": _dtw_distance(gz_norm, _normalize_seq(motion._templates.get("anti_clockwise", np.zeros(1)))),
+            "left": _dtw_distance(ax_norm, _normalize_seq(motion._templates.get("left", np.zeros(1)))),
+            "right": _dtw_distance(ax_norm, _normalize_seq(motion._templates.get("right", np.zeros(1)))),
         }
+        # DC-blocked DTW (what the detector actually uses)
+        if len(ax_raw) >= 15:
+            ax_sma = np.convolve(ax_raw, np.ones(10)/10, mode='same')
+            ax_hp = ax_raw - ax_sma
+            ax_hp_norm = _normalize_seq(ax_hp)
+            analysis["dtw_dcblocked"] = {
+                "left": _dtw_distance(ax_hp_norm, _normalize_seq(motion._templates.get("left", np.zeros(1)))),
+                "right": _dtw_distance(ax_hp_norm, _normalize_seq(motion._templates.get("right", np.zeros(1)))),
+            }
+            analysis["ax_hp_stats"] = {
+                "range": float(np.ptp(ax_hp)), "std": float(np.std(ax_hp)),
+                "max": float(np.max(ax_hp)), "min": float(np.min(ax_hp)),
+                "first_peak": float(ax_hp[5]) if len(ax_hp) > 5 else 0,
+            }
         analysis["gyro_z_zcr"] = float(np.sum(np.abs(np.diff(np.signbit(raw_imu_gyro_z[-30:])))) / max(1, len(raw_imu_gyro_z[-30:]) - 1))
         analysis["gyro_z_mean"] = float(np.mean(raw_imu_gyro_z[-30:]))
 
@@ -318,16 +334,20 @@ def print_analysis(analysis: dict) -> None:
             else:
                 print(f"  {name:12s}: (all unknown={out.get('unknown', 1):.3f})")
 
-    # DTW debug
-    dtw = analysis.get("dtw_debug", {})
-    if dtw:
-        print(f"\n── DTW Distances (lower = better match) ──")
-        for key in ["cw_distance", "acw_distance", "left_distance", "right_distance"]:
-            print(f"  {key}: {dtw[key]:.4f}")
+    # DTW: raw signal
+    dtw_raw = analysis.get("dtw_raw", {})
+    if dtw_raw:
+        print(f"\n── DTW on RAW accel (diagnostic) ──")
+        print(f"  left={dtw_raw.get('left', 0):.4f}  right={dtw_raw.get('right', 0):.4f}  cw={dtw_raw.get('cw', 0):.4f}  acw={dtw_raw.get('acw', 0):.4f}")
 
-    zcr = analysis.get("gyro_z_zcr")
-    gz_mean = analysis.get("gyro_z_mean")
-    if zcr is not None:
+    # DTW: DC-blocked (what detector uses)
+    dtw_dc = analysis.get("dtw_dcblocked", {})
+    ax_hp_stats = analysis.get("ax_hp_stats", {})
+    if dtw_dc:
+        print(f"\n── DTW on DC-BLOCKED accel (detector) ──")
+        print(f"  left={dtw_dc.get('left', 0):.4f}  right={dtw_dc.get('right', 0):.4f}")
+        if ax_hp_stats:
+            print(f"  ax_hp: range={ax_hp_stats['range']:.3f} std={ax_hp_stats['std']:.3f} max={ax_hp_stats['max']:.3f} min={ax_hp_stats['min']:.3f}")
         print(f"\n── Motion Physics ──")
         print(f"  gyro_z ZCR: {zcr:.3f}  (high=oscillation/wave, low=rotation/circle)")
         print(f"  gyro_z mean: {gz_mean:+.3f} rad/s  (+CW, -ACW, ~0=wave)")

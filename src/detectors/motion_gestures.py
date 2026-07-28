@@ -385,9 +385,9 @@ class MotionGestureDetector:
         elif is_circle_like:
             base = min(1.0, circle_magnitude / 1.5)
             if gz_mean > 0:
-                cw_score = base
-            else:
                 acw_score = base
+            else:
+                cw_score = base
             # DTW corroboration
             gz_norm = _normalize_seq(gz_seq)
             cw_tmpl = _normalize_seq(self._templates.get("clockwise", np.zeros(1)))
@@ -420,11 +420,11 @@ class MotionGestureDetector:
                 base = min(1.0, ax_hp_max / 0.8)
                 # DTW decides direction (shape match), with strong penalty for wrong way
                 if dtw_left < dtw_right:
-                    left_score = min(1.0, base * 1.3)
-                    right_score = base * 0.15
-                else:
                     right_score = min(1.0, base * 1.3)
                     left_score = base * 0.15
+                else:
+                    left_score = min(1.0, base * 1.3)
+                    right_score = base * 0.15
 
         # ── Boxing: accel magnitude peaks ─────────────────────────────
         amag_peaks = features.get("amag_peak_count", 0.0)
