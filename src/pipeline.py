@@ -9,6 +9,7 @@ Provides both a synchronous `run()` interface and an async generator.
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections.abc import Iterator
 
@@ -200,12 +201,22 @@ class GesturePipeline:
     # ── Frame processing ─────────────────────────────────────────────────
 
     def _process_frame(self, raw_frame) -> GestureEvent | None:
-        """Process a single raw sensor frame through the full pipeline."""
         # 1. Preprocess
         pf = self._preprocessor.process(raw_frame)
 
-        # 2. Push to detectors
+        # 2. Push to detectors (always — keeps windows current)
         self._push_to_detectors(pf)
+
+        # ── Motion gate: skip fusion if IMU is still ────────────────
+        if pf.imu_gyro is not None:
+            gmag = math.sqrt(pf.imu_gyro[0]**2 + pf.imu_gyro[1]**2 + pf.imu_gyro[2]**2)
+            amag = math.sqrt(
+                (pf.imu_linear_accel[0] if pf.imu_linear_accel else 0)**2 +
+                (pf.imu_linear_accel[1] if pf.imu_linear_accel else 0)**2 +
+                (pf.imu_linear_accel[2] if pf.imu_linear_accel else 0)**2
+            ) if pf.imu_linear_accel else 0
+            if gmag < 0.3 and amag < 0.15:
+                return None
 
         # 3. Collect evidence from each detector
         evidence_collected = 0
