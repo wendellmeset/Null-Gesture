@@ -385,9 +385,9 @@ class MotionGestureDetector:
         elif is_circle_like:
             base = min(1.0, circle_magnitude / 1.5)
             if gz_mean > 0:
-                acw_score = base
-            else:
                 cw_score = base
+            else:
+                acw_score = base
             # DTW corroboration
             gz_norm = _normalize_seq(gz_seq)
             cw_tmpl = _normalize_seq(self._templates.get("clockwise", np.zeros(1)))
@@ -400,9 +400,9 @@ class MotionGestureDetector:
                 cw_score *= 0.4
 
         else:
-            # ── Left / Right: DTW shape matching for direction ──────
-            # Initial impulse sign is unreliable with gravity residual;
-            # DTW template matching is the primary direction signal.
+            # ── Left / Right: accel transient + gyro_z direction ────
+            # Both gestures produce similar accel_x profiles after DC block;
+            # gyro_z sign reliably distinguishes them (wrist rotation direction).
             if len(ax_seq) >= 15:
                 ax_sma = np.convolve(ax_seq, np.ones(10)/10, mode='same')
                 ax_hp = ax_seq - ax_sma
@@ -412,20 +412,24 @@ class MotionGestureDetector:
             ax_hp_std = float(np.std(ax_hp))
             ax_hp_max = float(np.max(np.abs(ax_hp)))
             if ax_hp_range > 0.15 and ax_hp_range > ax_hp_std * 1.8:
-                ax_norm = _normalize_seq(ax_hp)
-                left_tmpl = _normalize_seq(self._templates.get("left", np.zeros(1)))
-                right_tmpl = _normalize_seq(self._templates.get("right", np.zeros(1)))
-                dtw_left = _dtw_distance(ax_norm, left_tmpl)
-                dtw_right = _dtw_distance(ax_norm, right_tmpl)
                 base = min(1.0, ax_hp_max / 0.8)
-                # DTW decides direction (shape match), with strong penalty for wrong way
-                if dtw_left < dtw_right:
+                # Use gyro_z sign for direction — rightward wrist motion
+                # produces +Z rotation, leftward produces -Z rotation
+                if gz_mean > 0.05:
                     right_score = min(1.0, base * 1.3)
                     left_score = base * 0.15
-                else:
+                elif gz_mean < -0.05:
                     left_score = min(1.0, base * 1.3)
                     right_score = base * 0.15
-
+                else:
+                    # No clear gyro direction — use DTW as tiebreaker
+                    ax_norm = _normalize_seq(ax_hp)
+                    left_tmpl = _normalize_seq(self._templates.get("left", np.zeros(1)))
+                    right_tmpl = _normalize_seq(self._templates.get("right", np.zeros(1)))
+                    if _dtw_distance(ax_norm, left_tmpl) < _dtw_distance(ax_norm, right_tmpl):
+                        left_score = min(1.0, base * 1.3)
+                    else:
+                        right_score = min(1.0, base * 1.3)
         # ── Boxing: accel magnitude peaks ─────────────────────────────
         amag_peaks = features.get("amag_peak_count", 0.0)
         amag_std = features.get("amag_std", 0.0)
