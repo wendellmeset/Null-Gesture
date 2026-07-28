@@ -1,0 +1,192 @@
+# Null-Gesture: Gesture-to-Primitive Mappings
+# ============================================
+# Each gesture is defined as a composition of motion primitives.
+# The primitives are detected independently and combined to classify gestures.
+
+gestures:
+  pull:
+    primitives: [TRANSLATE_Y_MINUS]
+    priority_sensor: mmwave
+    cooldown_group: linear
+    typical_duration_ms: [300, 1500]
+
+  push:
+    primitives: [TRANSLATE_Y_PLUS]
+    priority_sensor: mmwave
+    cooldown_group: linear
+    typical_duration_ms: [300, 1500]
+
+  clockwise:
+    primitives: [ROTATE_CW]
+    priority_sensor: imu
+    cooldown_group: rotation
+    typical_duration_ms: [500, 3000]
+
+  anti_clockwise:
+    primitives: [ROTATE_CCW]
+    priority_sensor: imu
+    cooldown_group: rotation
+    typical_duration_ms: [500, 3000]
+
+  left:
+    primitives: [TRANSLATE_X_MINUS]
+    priority_sensor: mmwave
+    cooldown_group: linear
+    typical_duration_ms: [300, 1500]
+
+  right:
+    primitives: [TRANSLATE_X_PLUS]
+    priority_sensor: mmwave
+    cooldown_group: linear
+    typical_duration_ms: [300, 1500]
+
+  bye_bye:
+    primitives: [OSCILLATE_FAST, TRANSLATE_Z_PLUS]
+    priority_sensor: both
+    cooldown_group: oscillatory
+    typical_duration_ms: [500, 4000]
+
+  one_arm_boxing:
+    primitives: [IMPULSE, TRANSLATE_Y_PLUS]
+    priority_sensor: both
+    cooldown_group: boxing
+    typical_duration_ms: [200, 1000]
+
+  clapping:
+    primitives: [IMPULSE]
+    priority_sensor: mmwave
+    cooldown_group: impulse
+    typical_duration_ms: [100, 500]
+
+  two_arm_boxing:
+    primitives: [IMPULSE, IMPULSE]
+    priority_sensor: mmwave
+    cooldown_group: boxing
+    typical_duration_ms: [200, 1500]
+
+  t_arms:
+    primitives: [HOLD]
+    priority_sensor: mmwave
+    cooldown_group: pose
+    typical_duration_ms: [500, 5000]
+
+  raise_arms:
+    primitives: [TRANSLATE_Z_PLUS, HOLD]
+    priority_sensor: both
+    cooldown_group: linear
+    typical_duration_ms: [500, 3000]
+
+  soli:
+    primitives: [OSCILLATE_FAST]
+    priority_sensor: mmwave
+    cooldown_group: oscillatory
+    typical_duration_ms: [500, 5000]
+
+  opening_closing_fist:
+    primitives: [OSCILLATE_SLOW]
+    priority_sensor: imu
+    cooldown_group: oscillatory
+    typical_duration_ms: [500, 5000]
+
+  palm_up_down:
+    primitives: [ROTATE_CW, ROTATE_CCW]
+    priority_sensor: imu
+    cooldown_group: rotation
+    typical_duration_ms: [500, 3000]
+
+
+# ── Motion Primitives ──────────────────────────────────────────────────
+
+primitives:
+  TRANSLATE_X_PLUS:
+    description: "Movement to the right"
+    imu_features:
+      - {feature: ax_mean, direction: gt, threshold_rel: 0.08}
+      - {feature: delta_roll, direction: lt, threshold_rel: 15.0}
+    mmwave_features:
+      - {feature: delta_x, direction: gt, threshold_rel: 0.05}
+
+  TRANSLATE_X_MINUS:
+    description: "Movement to the left"
+    imu_features:
+      - {feature: ax_mean, direction: lt, threshold_rel: -0.08}
+      - {feature: delta_roll, direction: gt, threshold_rel: -15.0}
+    mmwave_features:
+      - {feature: delta_x, direction: lt, threshold_rel: -0.05}
+
+  TRANSLATE_Y_PLUS:
+    description: "Movement forward / away from body"
+    imu_features:
+      - {feature: ay_mean, direction: gt, threshold_rel: 0.08}
+    mmwave_features:
+      - {feature: delta_y, direction: gt, threshold_rel: 0.05}
+
+  TRANSLATE_Y_MINUS:
+    description: "Movement backward / toward body"
+    imu_features:
+      - {feature: ay_mean, direction: lt, threshold_rel: -0.08}
+    mmwave_features:
+      - {feature: delta_y, direction: lt, threshold_rel: -0.05}
+
+  TRANSLATE_Z_PLUS:
+    description: "Movement upward"
+    imu_features:
+      - {feature: az_mean, direction: gt, threshold_rel: 0.05}
+    mmwave_features:
+      - {feature: delta_z, direction: gt, threshold_rel: 0.04}
+
+  TRANSLATE_Z_MINUS:
+    description: "Movement downward"
+    imu_features:
+      - {feature: az_mean, direction: lt, threshold_rel: -0.05}
+    mmwave_features:
+      - {feature: delta_z, direction: lt, threshold_rel: -0.04}
+
+  ROTATE_CW:
+    description: "Clockwise rotation"
+    imu_features:
+      - {feature: gz_mean, direction: lt, threshold_rel: -30.0}
+      - {feature: delta_yaw, direction: lt, threshold_rel: -20.0}
+    mmwave_features:
+      - {feature: circularity_score, direction: gt, threshold_rel: 0.6}
+      - {feature: angular_displacement, direction: gt, threshold_rel: 45.0}
+
+  ROTATE_CCW:
+    description: "Anti-clockwise rotation"
+    imu_features:
+      - {feature: gz_mean, direction: gt, threshold_rel: 30.0}
+      - {feature: delta_yaw, direction: gt, threshold_rel: 20.0}
+    mmwave_features:
+      - {feature: circularity_score, direction: gt, threshold_rel: 0.6}
+      - {feature: angular_displacement, direction: gt, threshold_rel: 45.0}
+
+  OSCILLATE_FAST:
+    description: "Periodic motion at 3-10 Hz"
+    imu_features:
+      - {feature: spectral_peak_freq_3_10hz, direction: gt, threshold_rel: 0.3}
+    mmwave_features:
+      - {feature: micro_doppler_peak_3_10hz, direction: gt, threshold_rel: 0.3}
+
+  OSCILLATE_SLOW:
+    description: "Periodic motion at 0.5-3 Hz"
+    imu_features:
+      - {feature: spectral_peak_freq_1_3hz, direction: gt, threshold_rel: 0.3}
+    mmwave_features:
+      - {feature: micro_doppler_peak_1_3hz, direction: gt, threshold_rel: 0.3}
+
+  IMPULSE:
+    description: "Sudden burst of energy"
+    imu_features:
+      - {feature: max_jerk, direction: gt, threshold_rel: 5.0}
+      - {feature: impulsiveness_ratio, direction: gt, threshold_rel: 3.0}
+    mmwave_features:
+      - {feature: max_velocity, direction: gt, threshold_rel: 0.5}
+      - {feature: velocity_kurtosis, direction: gt, threshold_rel: 3.0}
+
+  HOLD:
+    description: "Static pose with low variance"
+    imu_features:
+      - {feature: accel_variance, direction: lt, threshold_rel: 0.02}
+      - {feature: gyro_variance, direction: lt, threshold_rel: 5.0}
+    mmwave_features:
+      - {feature: centroid_displacement, direction: lt, threshold_rel: 0.03}

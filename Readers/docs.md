@@ -13,7 +13,7 @@ pip install -r Readers/requirements.txt
 
 - **RFID** also needs the Mercury API C library. See [RFID setup](#rfid-setup) below.
 - **mmWave** needs `numpy` (already in requirements.txt).
-- **UWB** and **IMU** need only `pyserial`.
+- **IMU** needs only `pyserial`.
 
 ## Readers at a glance
 
@@ -21,7 +21,6 @@ pip install -r Readers/requirements.txt
 |-------------|---------------------------|-----------------------------------------------|
 | `imu.py`    | ESP32 + BMI270            | `{'ax','ay','az','gx','gy','gz','t'}`        |
 | `mmwave.py` | TI IWRL6432 60 GHz radar  | `(points (N,3), velocities (N,))` — numpy arrays |
-| `uwb.py`    | DWM3001CDK UWB (1–2 boards)| `{'distance_m', 'addr'}`                     |
 | `rfid.py`   | M7E Hecto UHF RFID        | `{'epc', 'rssi', 'timestamp'}`               |
 
 ## Uniform interface
@@ -56,9 +55,7 @@ for points, velocities in radar.stream():
 
 - **RFID** auto-detects the M7E serial port by probing known USB-serial
   VID/PID pairs (CP210x, CH340, FTDI). Pass `port=` to override.
-- **IMU, UWB, mmWave** require an explicit `port=` argument.
-- **UWB** dual-board mode takes `initiator_port=` and `responder_port=`
-  instead of `port=`.
+- **IMU** and **mmWave** require an explicit `port=` argument.
 
 ### Platform port names
 

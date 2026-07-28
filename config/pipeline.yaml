@@ -1,0 +1,63 @@
+# Null-Gesture Pipeline Configuration
+# =====================================
+# Tune these values for your environment and sensor setup.
+
+sensors:
+  imu:
+    port: "/dev/ttyUSB0"
+    baud: 115200
+    buffer_size_sec: 2.0
+
+  mmwave:
+    port: "/dev/ttyACM0"
+    baud: 115200
+    config: "Readers/configs/mmwave_hand_50cm.cfg"
+    buffer_size_sec: 2.0
+
+  rfid:
+    enabled: false               # Optional — not required for core pipeline
+    port: null
+    baud: 115200
+
+segmenter:
+  # Weights for combining sensor signals into a single activity metric
+  metric_weights:
+    imu_accel: 0.4
+    imu_gyro: 0.3
+    mmwave_range: 0.3
+
+  # EMA alpha for baseline noise tracking
+  noise_ema_alpha: 0.01
+
+  # Adaptive threshold multipliers
+  threshold_on_multiplier: 2.5
+  threshold_off_multiplier: 1.8
+
+  # Gesture window constraints
+  min_gesture_duration_ms: 200
+  max_gesture_duration_ms: 5000
+  quiet_confirm_ms: 300           # Time below threshold to confirm gesture end
+
+fusion:
+  # HMM transition probabilities
+  transition_self_stay: 0.92      # P(stay in current gesture)
+  transition_to_idle: 0.15        # P(go to IDLE after any gesture)
+  idlestay: 0.98                  # P(stay in IDLE)
+
+  # Detection thresholds
+  detection_threshold: 0.7        # Required confidence to report
+  debounce_frames: 3              # Consecutive frames for same gesture
+  cooldown_ms: 600                # Min time between non-repeating gesture reports
+  boxing_cooldown_ms: 300         # Min time between boxing punch reports
+
+output:
+  print_gestures: true
+  log_file: null                  # Path to CSV log (null = disabled)
+  visualization: false            # Live matplotlib plot
+  osc_output: null                # OSC address for external consumers
+
+models:
+  imu_model_path: "models/imu_rf.pkl"
+  mmwave_model_path: "models/mmwave_hybrid.pkl"
+  calibration_profile: "profiles/default.npz"
+  selected_features: 100          # Top-N MI-ranked features to use

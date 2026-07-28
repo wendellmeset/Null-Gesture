@@ -25,6 +25,5 @@ All readers support iteration::
 from Readers.imu import IMUReader
 from Readers.mmwave import MMWaveReader
 from Readers.rfid import RFIDReader
-from Readers.uwb import UWBReader
 
-__all__ = ["IMUReader", "MMWaveReader", "RFIDReader", "UWBReader"]
+__all__ = ["IMUReader", "MMWaveReader", "RFIDReader"]
