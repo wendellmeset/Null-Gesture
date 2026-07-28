@@ -62,9 +62,9 @@ def _default_templates() -> dict[str, np.ndarray]:
     return {
         "clockwise": _normalize_seq(np.sin(t)),
         "anti_clockwise": _normalize_seq(-np.sin(t)),
-        # For right-wrist mount with X toward fingers:
-        # moving hand LEFT  → wrist flexes → +X accel (positive hump)
-        # moving hand RIGHT → wrist extends → -X accel (negative hump)
+        # Right-wrist mount, X toward fingers:
+        # +X accel (hand moves left) → positive hump → matches "left"
+        # -X accel (hand moves right) → negative hump → matches "right"
         "left": _normalize_seq(np.concatenate([
             np.linspace(0, 2, 20),
             np.linspace(2, 0, 20),
