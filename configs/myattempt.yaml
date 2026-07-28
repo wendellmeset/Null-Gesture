@@ -1,0 +1,41 @@
+# Null-Gesture Default Configuration
+# Copy this file and modify for your setup.
+
+sensors:
+  # IMU: ESP32 + BMI270 on wristband
+  imu: null         # e.g., /dev/ttyUSB0
+
+  # mmWave: TI IWRL6432 60 GHz radar on tabletop
+  mmwave: null      # e.g., /dev/ttyACM0
+  mmwave_config: Readers/configs/mmwave_hand_50cm.cfg
+
+  # UWB: DWM3001CDK boards (initiator on wrist, responder on tabletop)
+  uwb_initiator: null   # e.g., /dev/ttyACM1
+  uwb_responder: null   # e.g., /dev/ttyACM2
+
+  # RFID: M7E Hecto on tabletop (auto-detect if null)
+  rfid: null
+
+# RFID EPC → hand identity mapping
+# Register your tags: read EPCs during setup, map them here
+tag_map:
+  # "E28068940000501D2A3B5C6D": "left"
+  # "E28068940000501D2A3B5C6E": "right"
+
+# Fusion parameters
+fusion:
+  belief_threshold: 0.6     # minimum belief for gesture detection
+  conflict_threshold: 0.3   # maximum acceptable inter-classifier conflict
+
+# Pipeline tuning
+pipeline:
+  calibration_frames: 50    # frames for auto-calibration (~0.5s at 100Hz)
+  imu_window_samples: 50    # 500ms window at 100Hz
+  mmwave_window_frames: 10  # 200ms window at ~50Hz
+
+# Model paths
+models:
+  dir: src/models/myattempt
+  motion_rf: src/models/myattempt/motion_rf.pkl
+  dtw_templates: src/models/myattempt/dtw_templates.json
+  hmm_params: src/models/myattempt/hmm_params.json
