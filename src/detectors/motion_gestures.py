@@ -366,9 +366,8 @@ class MotionGestureDetector:
         ax_range = float(np.ptp(ax_seq))
 
         # ── Bye-Bye: oscillating gyro_z (check FIRST — overrides circle) ──
-        # Wave = high std/mean ratio + detectable ZCR
         oscillation_ratio = gz_std / max(abs(gz_mean), 0.05)
-        is_oscillation = gz_zcr > 0.02 and oscillation_ratio > 2.0 and gz_std > 1.5
+        is_oscillation = gz_zcr > 0.02 and oscillation_ratio > 2.0 and gz_std > 1.0
 
         # ── CW / ACW: constant rotation (only if NOT oscillating) ─────
         circle_magnitude = abs(gz_mean)
@@ -401,7 +400,9 @@ class MotionGestureDetector:
                 cw_score *= 0.4
 
         else:
-            # ── Left / Right: only when neither oscillation nor circle ──
+            # ── Left / Right: DTW shape matching for direction ──────
+            # Initial impulse sign is unreliable with gravity residual;
+            # DTW template matching is the primary direction signal.
             if len(ax_seq) >= 15:
                 ax_sma = np.convolve(ax_seq, np.ones(10)/10, mode='same')
                 ax_hp = ax_seq - ax_sma
@@ -411,20 +412,19 @@ class MotionGestureDetector:
             ax_hp_std = float(np.std(ax_hp))
             ax_hp_max = float(np.max(np.abs(ax_hp)))
             if ax_hp_range > 0.15 and ax_hp_range > ax_hp_std * 1.8:
-                threshold = ax_hp_std * 1.5
-                # Skip first few samples to avoid SMA edge effects
-                start = max(5, len(ax_hp) // 6)
-                direction = 0
-                for val in ax_hp[start:]:
-                    if val > threshold:
-                        direction = 1; break
-                    elif val < -threshold:
-                        direction = -1; break
+                ax_norm = _normalize_seq(ax_hp)
+                left_tmpl = _normalize_seq(self._templates.get("left", np.zeros(1)))
+                right_tmpl = _normalize_seq(self._templates.get("right", np.zeros(1)))
+                dtw_left = _dtw_distance(ax_norm, left_tmpl)
+                dtw_right = _dtw_distance(ax_norm, right_tmpl)
                 base = min(1.0, ax_hp_max / 0.8)
-                if direction > 0:
+                # DTW decides direction (shape match), with strong penalty for wrong way
+                if dtw_left < dtw_right:
                     left_score = min(1.0, base * 1.3)
-                elif direction < 0:
+                    right_score = base * 0.15
+                else:
                     right_score = min(1.0, base * 1.3)
+                    left_score = base * 0.15
 
         # ── Boxing: accel magnitude peaks ─────────────────────────────
         amag_peaks = features.get("amag_peak_count", 0.0)
