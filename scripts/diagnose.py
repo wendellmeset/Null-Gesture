@@ -446,11 +446,17 @@ def main() -> None:
 
     for r in all_results:
         g = r["gesture"]
-        fused = r.get("final_fusion", {})
-        detected = fused.get("gesture")
-        conf = fused.get("confidence", 0)
-        match = "✓" if detected == g else ("~" if detected and detected != "unknown" else "✗")
-        print(f"  {match} {g:20s} → detected as: {str(detected):20s} (conf={conf:.3f})")
+        consensus = r.get("detector_consensus", {})
+        # Majority vote from frame-by-frame consensus
+        if consensus:
+            majority = max(consensus, key=consensus.get)
+            total = sum(consensus.values())
+            pct = consensus[majority] / total * 100 if total > 0 else 0
+        else:
+            majority = None
+            pct = 0
+        match = "✓" if majority == g else ("~" if majority else "✗")
+        print(f"  {match} {g:20s} → majority: {str(majority):20s} ({pct:.0f}% of frames)")
 
     mux.stop()
     print("\nDone.")

@@ -327,12 +327,20 @@ class MotionGestureDetector:
         # Simple feature names used by RF
         self._feature_names: list[str] = []
 
+        # EMA state for sustained direction (survives window flips)
+        self._gz_ema: float = 0.0
+        self._gx_ema: float = 0.0
+
+        # Longer history for bye-bye ZCR (500ms at 100Hz = 50 samples)
+        self._bye_gz_history: deque[float] = deque(maxlen=50)
+
     def push(
         self,
         ax: float, ay: float, az: float,
         gx: float, gy: float, gz: float,
     ) -> None:
         self._window.push(ax, ay, az, gx, gy, gz)
+        self._bye_gz_history.append(gz)
 
     def detect(self) -> dict[str, float]:
         """Return belief masses for motion gestures using physics-informed rules.
@@ -355,6 +363,8 @@ class MotionGestureDetector:
         ax_seq = np.array(list(self._window._ax), dtype=np.float64)
         ay_seq = np.array(list(self._window._ay), dtype=np.float64)
         az_seq = np.array(list(self._window._az), dtype=np.float64)
+        gx_seq = np.array(list(self._window._gx), dtype=np.float64)
+        gy_seq = np.array(list(self._window._gy), dtype=np.float64)
         gz_seq = np.array(list(self._window._gz), dtype=np.float64)
         amag_seq = np.array(list(self._window._amag), dtype=np.float64)
 
@@ -365,9 +375,22 @@ class MotionGestureDetector:
         ax_std = float(np.std(ax_seq))
         ax_range = float(np.ptp(ax_seq))
 
-        # ── Bye-Bye: oscillating gyro_z (check FIRST — overrides circle) ──
-        oscillation_ratio = gz_std / max(abs(gz_mean), 0.05)
-        is_oscillation = gz_zcr > 0.02 and oscillation_ratio > 2.0 and gz_std > 1.0
+        # Update EMAs for sustained direction (α=0.15, ~7-window smoothing)
+        self._gz_ema = self._gz_ema * 0.85 + gz_mean * 0.15
+        self._gx_ema = self._gx_ema * 0.85 + float(np.mean(gx_seq)) * 0.15
+
+        # ── Bye-Bye: detrended ZCR on 500ms gyro_z history ──────────
+        bye_gz = np.array(list(self._bye_gz_history), dtype=np.float64)
+        if len(bye_gz) >= 20:
+            bye_gz_mean = float(np.mean(bye_gz))
+            bye_gz_detrended = bye_gz - bye_gz_mean
+            bye_gz_zcr = float(np.sum(np.abs(np.diff(np.signbit(bye_gz_detrended)))) / max(len(bye_gz_detrended) - 1, 1))
+            bye_gz_std = float(np.std(bye_gz))
+            is_oscillation = bye_gz_zcr > 0.04 and bye_gz_std > 1.0
+        else:
+            bye_gz_zcr = 0.0
+            bye_gz_std = 0.0
+            is_oscillation = False
 
         # ── CW / ACW: constant rotation (only if NOT oscillating) ─────
         circle_magnitude = abs(gz_mean)
@@ -380,11 +403,11 @@ class MotionGestureDetector:
         right_score = 0.0
 
         if is_oscillation:
-            bye_score = min(1.0, gz_zcr * 4.0 * min(1.0, gz_std / 5.0))
+            bye_score = min(1.0, bye_gz_zcr * 5.0 * min(1.0, bye_gz_std / 5.0))
 
         elif is_circle_like:
             base = min(1.0, circle_magnitude / 1.5)
-            if gz_mean > 0:
+            if self._gz_ema < 0:
                 cw_score = base
             else:
                 acw_score = base
@@ -413,23 +436,13 @@ class MotionGestureDetector:
             ax_hp_max = float(np.max(np.abs(ax_hp)))
             if ax_hp_range > 0.15 and ax_hp_range > ax_hp_std * 1.8:
                 base = min(1.0, ax_hp_max / 0.8)
-                # Use gyro_z sign for direction — rightward wrist motion
-                # produces +Z rotation, leftward produces -Z rotation
-                if gz_mean > 0.05:
-                    right_score = min(1.0, base * 1.3)
-                    left_score = base * 0.15
-                elif gz_mean < -0.05:
+                # gyro_x EMA sign distinguishes left vs right wrist motion
+                if self._gx_ema > 0.05:
                     left_score = min(1.0, base * 1.3)
                     right_score = base * 0.15
-                else:
-                    # No clear gyro direction — use DTW as tiebreaker
-                    ax_norm = _normalize_seq(ax_hp)
-                    left_tmpl = _normalize_seq(self._templates.get("left", np.zeros(1)))
-                    right_tmpl = _normalize_seq(self._templates.get("right", np.zeros(1)))
-                    if _dtw_distance(ax_norm, left_tmpl) < _dtw_distance(ax_norm, right_tmpl):
-                        left_score = min(1.0, base * 1.3)
-                    else:
-                        right_score = min(1.0, base * 1.3)
+                elif self._gx_ema < -0.05:
+                    right_score = min(1.0, base * 1.3)
+                    left_score = base * 0.15
         # ── Boxing: accel magnitude peaks ─────────────────────────────
         amag_peaks = features.get("amag_peak_count", 0.0)
         amag_std = features.get("amag_std", 0.0)
