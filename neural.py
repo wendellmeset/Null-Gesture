@@ -1,25 +1,60 @@
+import glob
+import os
+import pickle
+
 import keras
 import numpy as np
 import pandas as pd
-import pickle
 from keras import layers
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
-pose_data = pd.read_csv('')
-X = pose_data.drop(columns=['label']).values
-y = pose_data['label'].values
+file_paths = glob.glob("*_*.csv")
 
-x_train, x_val, y_train, y_val = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
+# Extract gesture_name by taking everything before the final underscore '_'
+# e.g., 'wave_12.csv' -> 'wave'
+file_labels = [os.path.basename(f).rsplit('_', 1)[0] for f in file_paths]
+
+# 2. Split entire file recordings into Train and Validation sets
+train_files, val_files, train_file_labels, val_file_labels = train_test_split(
+    file_paths,
+    file_labels,
+    test_size=0.2,
+    random_state=42,
+    stratify=file_labels
 )
 
-scaler = StandardScaler()
-x_train = scaler.fit_transform(x_train)
-x_val = scaler.transform(x_val)
+# 3. Helper function to read full recording files into feature and target arrays
+def load_dataset_from_file_list(file_list):
+    X_list, y_list = [], []
 
-x_train = np.expand_dims(x_train, axis=-1)
-x_val = np.expand_dims(x_val, axis=-1)
+    for file_path in file_list:
+        gesture_name = os.path.basename(file_path).rsplit('_', 1)[0]
+        df = pd.read_csv(file_path)
+
+        # Each row is a timestamp/sample of feature values (ax, ay, az, gx, gy, gz, d, etc.)
+        X_list.append(df.values)
+        y_list.append([gesture_name] * len(df))
+
+    return np.vstack(X_list), np.concatenate(y_list)
+
+# Load data split cleanly by recording trial
+X_train_raw, y_train_raw = load_dataset_from_file_list(train_files)
+X_val_raw, y_val_raw = load_dataset_from_file_list(val_files)
+
+# 4. Encode gesture labels (e.g., 'wave' -> 0, 'ghost' -> 1)
+label_encoder = LabelEncoder()
+y_train = label_encoder.fit_transform(y_train_raw)
+y_val = label_encoder.transform(y_val_raw)
+
+# 5. Fit scale transform on training set only
+scaler = StandardScaler()
+X_train = scaler.fit_transform(X_train_raw)
+X_val = scaler.transform(X_val_raw)
+
+# Reshape for 1D CNN: (samples, feature_count, 1)
+x_train = np.expand_dims(X_train, axis=-1)
+x_val = np.expand_dims(X_val, axis=-1)
 
 model = keras.Sequential([
     layers.Input(shape=(x_train.shape[1], 1)),
@@ -57,5 +92,9 @@ fit_model = model.fit(
 )
 print(model.summary())
 model.save("gesture_model.h5")
+
 with open("gesture_scaler.pkl", "wb") as f:
     pickle.dump(scaler, f)
+
+with open("gesture_label_encoder.pkl", "wb") as f:
+    pickle.dump(label_encoder, f)
