@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import subprocess
+import signal
 import sys
 import threading
 import time
@@ -111,16 +112,31 @@ class UWBReader:
         self._sample_count = 0
         self._env = _build_env()
 
+    @staticmethod
+    def _kill_stale() -> None:
+        """Kill any leftover UWB subprocesses from previous runs."""
+        try:
+            result = subprocess.run(
+                ["pgrep", "-af", "run_fira_twr"],
+                capture_output=True, text=True, timeout=2,
+            )
+            for line in result.stdout.strip().split("\n"):
+                if not line.strip():
+                    continue
+                pid_str = line.split()[0]
+                try:
+                    pid = int(pid_str)
+                    os.kill(pid, signal.SIGTERM)
+                except (ValueError, ProcessLookupError):
+                    pass
+        except Exception:
+            pass
+
     # ── Connection ───────────────────────────────────────────────────────
 
     def connect(self, **kwargs) -> bool:
-        """Start FiRa TWR session.
-
-        Accepts keyword overrides: initiator=, responder=, port=.
-        For single-board mode, pass port=.
-        For dual-board mode, pass initiator= and responder=.
-        If no ports given, uses values from constructor.
-        """
+        """Start FiRa TWR session. Cleans up stale processes from previous runs."""
+        UWBReader._kill_stale()
         initiator = kwargs.get("initiator") or self._initiator_port
         responder = kwargs.get("responder") or self._responder_port
         single = kwargs.get("port") or self._port
@@ -203,9 +219,10 @@ class UWBReader:
         self._connected = False
 
         for proc in [self._controller_proc, self._controlee_proc]:
-            if proc:
+            if proc and proc.poll() is None:
                 try:
-                    proc.terminate()
+                    # Kill entire process group (start_new_session=True)
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
                     proc.wait(timeout=3)
                 except Exception:
                     try:

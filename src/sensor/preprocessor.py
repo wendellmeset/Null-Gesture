@@ -351,7 +351,8 @@ class SensorPreprocessor:
 
     def _process_uwb(self, uwb: dict) -> tuple[float | None, float | None]:
         dist = uwb.get("distance_m")
-        if dist is None:
+        # Reject startup spikes and invalid readings (> 100m is noise)
+        if dist is None or dist > 100.0:
             return None, None
 
         # Accumulate for calibration

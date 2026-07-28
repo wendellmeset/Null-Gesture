@@ -240,6 +240,17 @@ class GesturePipeline:
             self._fusion.add_evidence("hand", hand_result)
             evidence_collected += 1
 
+        # ── Cross-detector gate: bye-bye requires UWB distance stability ──
+        # Only gate when proximity has an opinion (UWB data is flowing).
+        # If proximity is all-unknown (no UWB data), don't suppress motion.
+        proximity_has_opinion = proximity_result.get("unknown", 1.0) < 0.9
+        if motion_result.get("bye_bye", 0) > 0.3 and proximity_has_opinion:
+            proximity_bye = proximity_result.get("bye_bye", 0)
+            if proximity_bye < 0.1:
+                suppressed = motion_result.get("bye_bye", 0)
+                motion_result["bye_bye"] = 0.0
+                motion_result["unknown"] = min(1.0, motion_result.get("unknown", 0) + suppressed)
+
         if evidence_collected == 0:
             self._fusion.reset()
             return None

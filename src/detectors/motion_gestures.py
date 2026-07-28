@@ -386,7 +386,12 @@ class MotionGestureDetector:
             bye_gz_detrended = bye_gz - bye_gz_mean
             bye_gz_zcr = float(np.sum(np.abs(np.diff(np.signbit(bye_gz_detrended)))) / max(len(bye_gz_detrended) - 1, 1))
             bye_gz_std = float(np.std(bye_gz))
-            is_oscillation = bye_gz_zcr > 0.04 and bye_gz_std > 1.0
+            # Oscillation = fast direction changes around mean AND
+            # oscillation energy is significant relative to any DC offset
+            bye_ratio = bye_gz_std / max(abs(bye_gz_mean), 0.05)
+            # Don't fire oscillation if it's clearly a strong circle
+            strong_circle = abs(bye_gz_mean) > 1.5 and bye_gz_zcr < 0.08
+            is_oscillation = bye_gz_zcr > 0.04 and bye_ratio > 0.8 and not strong_circle
         else:
             bye_gz_zcr = 0.0
             bye_gz_std = 0.0

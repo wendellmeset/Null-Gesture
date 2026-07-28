@@ -57,8 +57,8 @@ class ProximityGestureDetector:
                 self._calibrated = True
 
     def detect(self) -> dict[str, float]:
-        """Return belief masses for Pull/Push."""
-        result: dict[str, float] = {"pull": 0.0, "push": 0.0, "unknown": 1.0}
+        """Return belief masses for Pull/Push + bye-bye (distance stability)."""
+        result: dict[str, float] = {"pull": 0.0, "push": 0.0, "bye_bye": 0.0, "unknown": 1.0}
 
         if not self._uwb_window.full:
             return result
@@ -70,15 +70,22 @@ class ProximityGestureDetector:
         vel_mean = uwb_feats.get("uwb_velocity_mean", 0.0)
         vel_consistency = uwb_feats.get("uwb_velocity_sign_consistency", 0.0)
         dist_slope = uwb_feats.get("uwb_distance_slope", 0.0)
+        dist_mean = uwb_feats.get("uwb_distance_mean", 0.0)
+        dist_std = uwb_feats.get("uwb_distance_std", 0.0)
+
+        # ── Bye-Bye: stable distance (hand stays at consistent range) ──
+        bye_score = 0.0
+        if dist_mean > 0.05 and dist_std > 0.001:
+            cv = dist_std / dist_mean  # coefficient of variation
+            # Low CV = distance isn't changing much (waving, not pushing/pulling)
+            if cv < 0.15 and dist_std < 0.15:
+                bye_score = min(1.0, (1.0 - cv / 0.15) * 1.5)
 
         # ── Pull detection ──────────────────────────────────────────
         pull_score = 0.0
         if vel_mean < self._pull_thresh and vel_consistency > 0.6:
-            # Sustained motion toward body
             velocity_ratio = abs(vel_mean) / abs(self._pull_thresh)
             pull_score = min(1.0, velocity_ratio * vel_consistency)
-
-            # Distance decreasing (corroboration)
             if dist_slope < 0:
                 pull_score = min(1.0, pull_score * 1.3)
 
@@ -87,17 +94,13 @@ class ProximityGestureDetector:
         if vel_mean > self._push_thresh and vel_consistency > 0.6:
             velocity_ratio = vel_mean / self._push_thresh
             push_score = min(1.0, velocity_ratio * vel_consistency)
-
             if dist_slope > 0:
                 push_score = min(1.0, push_score * 1.3)
 
-        # IMU confirmation (accel direction)
+        # IMU confirmation
         if self._imu_window.full:
             imu_feats = self._imu_window.compute_features()
             az_mean = imu_feats.get("az_mean", 0.0)
-            # In sensor frame, negative Z (removing gravity) →
-            # acceleration toward user typically maps to +az in linear accel
-            # This is sensor-frame dependent; calibrate per setup
             if pull_score > 0 and az_mean < -0.5:
                 pull_score = min(1.0, pull_score * 1.2)
             if push_score > 0 and az_mean > 0.5:
@@ -106,7 +109,8 @@ class ProximityGestureDetector:
         # ── Assemble ────────────────────────────────────────────────
         result["pull"] = min(0.9, pull_score)
         result["push"] = min(0.9, push_score)
-        total = result["pull"] + result["push"]
+        result["bye_bye"] = min(0.9, bye_score)
+        total = result["pull"] + result["push"] + result["bye_bye"]
         result["unknown"] = max(0.1, 1.0 - total)
 
         return result
