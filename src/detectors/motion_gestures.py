@@ -379,23 +379,10 @@ class MotionGestureDetector:
         self._gz_ema = self._gz_ema * 0.85 + gz_mean * 0.15
         self._gx_ema = self._gx_ema * 0.85 + float(np.mean(gx_seq)) * 0.15
 
-        # ── Bye-Bye: detrended ZCR on 500ms gyro_z history ──────────
-        bye_gz = np.array(list(self._bye_gz_history), dtype=np.float64)
-        if len(bye_gz) >= 20:
-            bye_gz_mean = float(np.mean(bye_gz))
-            bye_gz_detrended = bye_gz - bye_gz_mean
-            bye_gz_zcr = float(np.sum(np.abs(np.diff(np.signbit(bye_gz_detrended)))) / max(len(bye_gz_detrended) - 1, 1))
-            bye_gz_std = float(np.std(bye_gz))
-            # Oscillation = fast direction changes around mean AND
-            # oscillation energy is significant relative to any DC offset
-            bye_ratio = bye_gz_std / max(abs(bye_gz_mean), 0.05)
-            # Don't fire oscillation if it's clearly a strong circle
-            strong_circle = abs(bye_gz_mean) > 1.5 and bye_gz_zcr < 0.08
-            is_oscillation = bye_gz_zcr > 0.04 and bye_ratio > 0.8 and not strong_circle
-        else:
-            bye_gz_zcr = 0.0
-            bye_gz_std = 0.0
-            is_oscillation = False
+        # ── Bye-Bye: disabled for IMU-only (requires UWB distance stability) ──
+        # The IMU cannot reliably distinguish a wave from lateral gestures
+        # or circles with speed variation. Enable when UWB is functional.
+        is_oscillation = False
 
         # ── CW / ACW: constant rotation (only if NOT oscillating) ─────
         circle_magnitude = abs(gz_mean)
@@ -408,7 +395,7 @@ class MotionGestureDetector:
         right_score = 0.0
 
         if is_oscillation:
-            bye_score = min(1.0, bye_gz_zcr * 5.0 * min(1.0, bye_gz_std / 5.0))
+            bye_score = 0.0  # IMU-only bye-bye disabled
 
         elif is_circle_like:
             base = min(1.0, circle_magnitude / 1.5)
@@ -416,7 +403,6 @@ class MotionGestureDetector:
                 cw_score = base
             else:
                 acw_score = base
-            # DTW corroboration
             gz_norm = _normalize_seq(gz_seq)
             cw_tmpl = _normalize_seq(self._templates.get("clockwise", np.zeros(1)))
             acw_tmpl = _normalize_seq(self._templates.get("anti_clockwise", np.zeros(1)))
@@ -428,9 +414,7 @@ class MotionGestureDetector:
                 cw_score *= 0.4
 
         else:
-            # ── Left / Right: accel transient + gyro_z direction ────
-            # Both gestures produce similar accel_x profiles after DC block;
-            # gyro_z sign reliably distinguishes them (wrist rotation direction).
+            # ── Left / Right: accel transient + gyro_x direction ────
             if len(ax_seq) >= 15:
                 ax_sma = np.convolve(ax_seq, np.ones(10)/10, mode='same')
                 ax_hp = ax_seq - ax_sma
@@ -441,7 +425,6 @@ class MotionGestureDetector:
             ax_hp_max = float(np.max(np.abs(ax_hp)))
             if ax_hp_range > 0.15 and ax_hp_range > ax_hp_std * 1.8:
                 base = min(1.0, ax_hp_max / 0.8)
-                # gyro_x EMA sign distinguishes left vs right wrist motion
                 if self._gx_ema > 0.05:
                     left_score = min(1.0, base * 1.3)
                     right_score = base * 0.15

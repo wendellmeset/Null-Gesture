@@ -230,10 +230,10 @@ class SensorMultiplexer:
         if not initiator or not responder:
             uwb_ports = self._find_uwb_ports()
             if len(uwb_ports) >= 2:
-                if not responder:
-                    responder = uwb_ports[0]
                 if not initiator:
-                    initiator = uwb_ports[1]
+                    initiator = uwb_ports[1]  # second nRF52 = initiator
+                if not responder:
+                    responder = uwb_ports[0]  # first nRF52 = responder
 
         if initiator and responder:
             try:
