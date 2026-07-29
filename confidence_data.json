@@ -1,0 +1,80 @@
+{
+  "overall_mean_confidence": 0.834,
+  "per_class": {
+    "pull": {
+      "mean": 0.93,
+      "std": 0.04,
+      "detector_group": "Proximity"
+    },
+    "push": {
+      "mean": 0.9,
+      "std": 0.06,
+      "detector_group": "Proximity"
+    },
+    "clockwise": {
+      "mean": 0.82,
+      "std": 0.1,
+      "detector_group": "Motion"
+    },
+    "anti_clockwise": {
+      "mean": 0.78,
+      "std": 0.11,
+      "detector_group": "Motion"
+    },
+    "left": {
+      "mean": 0.84,
+      "std": 0.08,
+      "detector_group": "Motion"
+    },
+    "right": {
+      "mean": 0.83,
+      "std": 0.08,
+      "detector_group": "Motion"
+    },
+    "bye_bye": {
+      "mean": 0.76,
+      "std": 0.12,
+      "detector_group": "Motion"
+    },
+    "one_arm_boxing": {
+      "mean": 0.86,
+      "std": 0.07,
+      "detector_group": "Motion"
+    },
+    "clapping": {
+      "mean": 0.92,
+      "std": 0.04,
+      "detector_group": "Posture"
+    },
+    "two_arm_boxing": {
+      "mean": 0.79,
+      "std": 0.1,
+      "detector_group": "Motion"
+    },
+    "t_arms": {
+      "mean": 0.85,
+      "std": 0.08,
+      "detector_group": "Posture"
+    },
+    "raise_arms": {
+      "mean": 0.84,
+      "std": 0.09,
+      "detector_group": "Posture"
+    },
+    "soli": {
+      "mean": 0.91,
+      "std": 0.05,
+      "detector_group": "Micro-Doppler"
+    },
+    "fist_open_close": {
+      "mean": 0.73,
+      "std": 0.13,
+      "detector_group": "Hand"
+    },
+    "palm_up_down": {
+      "mean": 0.75,
+      "std": 0.12,
+      "detector_group": "Hand"
+    }
+  }
+}
